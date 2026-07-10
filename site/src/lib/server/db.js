@@ -7,50 +7,65 @@ import { fileURLToPath } from 'node:url';
 
 // Find tspdt.db whether we're launched from ./ or ./site (dev/build/preview all differ).
 const here = dirname(fileURLToPath(import.meta.url));
-const CANDIDATES = [
-  process.env.TSPDT_DB,
-  resolve(process.cwd(), 'tspdt.db'),
-  resolve(process.cwd(), '..', 'tspdt.db'),
-  resolve(here, '../../../../tspdt.db') // site/src/lib/server -> project root
-].filter(Boolean);
-const DB_PATH = CANDIDATES.find((p) => existsSync(p));
-if (!DB_PATH) {
-  throw new Error(
-    'tspdt.db not found. Run  python tspdt_sync.py  in the project root first. Looked in:\n  ' +
-    CANDIDATES.join('\n  ')
-  );
+
+// The connection is opened LAZILY on first query, not at module load. That lets
+// this module be imported without a database present -- notably during
+// `vite build`, whose analyse step imports every server module to read its
+// exports. (Opening at import time would make the build require a prebuilt DB.)
+let _db = null;
+function getDb() {
+  if (_db) return _db;
+  const CANDIDATES = [
+    process.env.TSPDT_DB,
+    resolve(process.cwd(), 'tspdt.db'),
+    resolve(process.cwd(), '..', 'tspdt.db'),
+    resolve(here, '../../../../tspdt.db') // site/src/lib/server -> project root
+  ].filter(Boolean);
+  const DB_PATH = CANDIDATES.find((p) => existsSync(p));
+  if (!DB_PATH) {
+    throw new Error(
+      'tspdt.db not found. Run  python tspdt_sync.py  in the project root first. Looked in:\n  ' +
+      CANDIDATES.join('\n  ')
+    );
+  }
+  const db = new DatabaseSync(DB_PATH);
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 4000;');
+  // Personal state + availability/metadata caches -- added alongside the synced
+  // data; the Python sync never touches these tables.
+  //   * user_status is PER USER: keyed on (cf_user, id_tspdt) so each Cloudflare
+  //     Access identity has its own watchlist / seen list.
+  //   * ia_cache / film_meta are film properties (availability, poster art,
+  //     ratings), shared across users -- deliberately NOT per user.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS user_status (
+      cf_user    TEXT NOT NULL,
+      id_tspdt   INTEGER NOT NULL REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      status     TEXT NOT NULL CHECK(status IN ('watchlist','seen')),
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (cf_user, id_tspdt)
+    );
+    CREATE TABLE IF NOT EXISTS ia_cache (
+      id_tspdt      INTEGER PRIMARY KEY,
+      available     INTEGER NOT NULL,
+      identifier    TEXT, watch TEXT, download TEXT, download_name TEXT,
+      checked_at    TEXT DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS film_meta (
+      id_tspdt      INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      level         TEXT,
+      json          TEXT NOT NULL,
+      fetched_at    TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  _db = db;
+  return _db;
 }
-
-const db = new DatabaseSync(DB_PATH);
-db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 4000;');
-// Personal state + availability cache -- added alongside the synced data; the
-// Python sync never touches these tables.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS user_status (
-    id_tspdt   INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
-    status     TEXT NOT NULL CHECK(status IN ('watchlist','seen')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS ia_cache (
-    id_tspdt      INTEGER PRIMARY KEY,
-    available     INTEGER NOT NULL,
-    identifier    TEXT, watch TEXT, download TEXT, download_name TEXT,
-    checked_at    TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS film_meta (
-    id_tspdt      INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
-    level         TEXT,
-    json          TEXT NOT NULL,
-    fetched_at    TEXT DEFAULT (datetime('now'))
-  );
-`);
-
-export { db };
 
 /* -------------------------------------------------------------- facets ---- */
 let _facets = null;
 export function getFacets() {
   if (_facets) return _facets;
+  const db = getDb();
   const rows = db.prepare(
     'SELECT country, genre, colour, year FROM films WHERE removed_at IS NULL AND latest_rank IS NOT NULL'
   ).all();
@@ -87,6 +102,8 @@ const likeEsc = (s) => String(s).replace(/[\\%_]/g, '\\$&');       // escape LIK
 const LIKE = "LIKE ? ESCAPE '\\'";
 
 export function queryFilms(p = {}) {
+  const db = getDb();
+  const user = p.user ?? 'local';                                  // per-user watchlist/seen (Cloudflare identity)
   const where = ['f.removed_at IS NULL', 'f.latest_rank IS NOT NULL'];
   const args = [];
   if (p.q) { where.push(`(f.title ${LIKE} OR f.director ${LIKE})`); args.push(`%${likeEsc(p.q)}%`, `%${likeEsc(p.q)}%`); }
@@ -104,7 +121,8 @@ export function queryFilms(p = {}) {
   if (colours.length) { where.push('f.colour IN (' + colours.map(() => '?').join(',') + ')'); colours.forEach((c) => args.push(c)); }
   if (p.new === '1' || p.new === true) where.push('f.is_new = 1');
 
-  const join = 'LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt';
+  // Per-user join: the status column (and the status filter) reflect THIS user.
+  const join = 'LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?';
   if (p.status === 'watchlist' || p.status === 'seen') { where.push('us.status = ?'); args.push(p.status); }
 
   const sort = Object.hasOwn(SORTS, p.sort) ? SORTS[p.sort] : SORTS.rank;  // no prototype read-through
@@ -113,32 +131,34 @@ export function queryFilms(p = {}) {
   const offset = Math.max(0, Math.trunc(+p.offset || 0));
   const wc = where.join(' AND ');
 
-  const total = db.prepare(`SELECT count(*) c FROM films f ${join} WHERE ${wc}`).get(...args).c;
+  // The join's `?` (user) binds before the WHERE args; LIMIT/OFFSET bind last.
+  const total = db.prepare(`SELECT count(*) c FROM films f ${join} WHERE ${wc}`).get(user, ...args).c;
   const items = db.prepare(
     `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, f.country,
             f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.is_new, us.status
      FROM films f ${join} WHERE ${wc}
      ORDER BY ${sort} ${order}, f.latest_rank ASC
      LIMIT ? OFFSET ?`
-  ).all(...args, limit, offset);
+  ).all(user, ...args, limit, offset);
   return { total, items };
 }
 
 export function getFilmBasic(id) {
-  return db.prepare(
+  return getDb().prepare(
     'SELECT id_tspdt, imdb_id, imdb_url, title, year FROM films WHERE id_tspdt = ?'
   ).get(id) || null;
 }
 
-export function getFilm(id) {
+export function getFilm(id, user = 'local') {
+  const db = getDb();
   const row = db.prepare(
     `SELECT f.*, us.status, ic.available AS free, ic.watch AS ia_watch,
             ic.download AS ia_download, ic.identifier AS ia_id
      FROM films f
-     LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt
+     LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
      LEFT JOIN ia_cache ic ON ic.id_tspdt = f.id_tspdt
      WHERE f.id_tspdt = ?`
-  ).get(id);
+  ).get(user, id);
   if (!row) return null;
   delete row.content_hash;
   row.history = db.prepare(
@@ -150,32 +170,34 @@ export function getFilm(id) {
 }
 
 /* -------------------------------------------------------------- status ---- */
-export function setStatus(id, status) {
+export function setStatus(user, id, status) {
+  const db = getDb();
   if (status === 'watchlist' || status === 'seen') {
     db.prepare(
-      `INSERT INTO user_status(id_tspdt, status, updated_at) VALUES(?,?,datetime('now'))
-       ON CONFLICT(id_tspdt) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at`
-    ).run(id, status);
+      `INSERT INTO user_status(cf_user, id_tspdt, status, updated_at) VALUES(?,?,?,datetime('now'))
+       ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at`
+    ).run(user, id, status);
   } else {
-    db.prepare('DELETE FROM user_status WHERE id_tspdt = ?').run(id);
+    db.prepare('DELETE FROM user_status WHERE cf_user = ? AND id_tspdt = ?').run(user, id);
     status = null;
   }
-  return { status, counts: counts() };
+  return { status, counts: counts(user) };
 }
 
-export function counts() {
-  const r = db.prepare(
-    "SELECT COALESCE(SUM(status='watchlist'),0) watchlist, COALESCE(SUM(status='seen'),0) seen FROM user_status"
-  ).get();
+export function counts(user = 'local') {
+  const r = getDb().prepare(
+    `SELECT COALESCE(SUM(status='watchlist'),0) watchlist, COALESCE(SUM(status='seen'),0) seen
+     FROM user_status WHERE cf_user = ?`
+  ).get(user);
   return { watchlist: r.watchlist, seen: r.seen };
 }
 
 /* -------------------------------------------------- availability cache ---- */
 export function getCachedAvailability(id) {
-  return db.prepare('SELECT * FROM ia_cache WHERE id_tspdt = ?').get(id) || null;
+  return getDb().prepare('SELECT * FROM ia_cache WHERE id_tspdt = ?').get(id) || null;
 }
 export function cacheAvailability(id, a) {
-  db.prepare(
+  getDb().prepare(
     `INSERT INTO ia_cache(id_tspdt, available, identifier, watch, download, download_name, checked_at)
      VALUES(?,?,?,?,?,?,datetime('now'))
      ON CONFLICT(id_tspdt) DO UPDATE SET available=excluded.available, identifier=excluded.identifier,
@@ -187,10 +209,10 @@ export function cacheAvailability(id, a) {
 
 /* ------------------------------------------------- enrichment cache ------ */
 export function getMetaCache(id) {
-  return db.prepare('SELECT json, level, fetched_at FROM film_meta WHERE id_tspdt = ?').get(id) || null;
+  return getDb().prepare('SELECT json, level, fetched_at FROM film_meta WHERE id_tspdt = ?').get(id) || null;
 }
 export function setMetaCache(id, obj, level) {
-  db.prepare(
+  getDb().prepare(
     `INSERT INTO film_meta(id_tspdt, level, json, fetched_at) VALUES(?,?,?,datetime('now'))
      ON CONFLICT(id_tspdt) DO UPDATE SET level=excluded.level, json=excluded.json, fetched_at=excluded.fetched_at`
   ).run(id, level, JSON.stringify(obj));

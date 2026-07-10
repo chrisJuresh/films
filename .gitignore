@@ -7,6 +7,7 @@ site/.env.*
 !site/.env.example
 
 # --- dependencies / build output ---
+.venv/
 node_modules/
 site/node_modules/
 site/.svelte-kit/
