@@ -30,6 +30,8 @@
   let playing = $state(false);        // inline browser player open
   let videoEl;
   let savedAt = 0;
+  let releases = $state(null);        // interactive-search candidates (pick a release)
+  let releasesLoading = $state(false);
 
   let loadedId;
   $effect(() => {
@@ -37,7 +39,7 @@
     status = film.status ?? null; lbState = film.lb_state ?? null;
     if (loadedId === id) return;
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
-    watchInfo = null; playing = false; savedAt = 0;
+    watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
@@ -109,6 +111,30 @@
       downloadState = 'idle';
       loadRadarr(film.id_tspdt);
     } catch (e) { toast(e.message || 'Could not cancel the download.', 'error', 4200); }
+  }
+  // Interactive search: let the user pick a release instead of Radarr auto-grab.
+  async function chooseRelease() {
+    releasesLoading = true; releases = null;
+    try {
+      const r = await fetch(`/api/radarr/${film.id_tspdt}/releases`);
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.message || 'Release search failed.');
+      releases = d.releases || [];
+    } catch (e) { toast(e.message || 'Release search failed.', 'error', 4600); }
+    finally { releasesLoading = false; }
+  }
+  async function grab(rel) {
+    try {
+      const r = await fetch(`/api/radarr/${film.id_tspdt}/releases`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ guid: rel.guid, indexerId: rel.indexerId })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.message || 'Grab failed.');
+      toast('Grabbing that release…', 'ok');
+      releases = null; downloadState = 'queued';
+      loadRadarr(film.id_tspdt); loadWatch(film.id_tspdt);
+    } catch (e) { toast(e.message || 'Could not grab that release.', 'error', 4600); }
   }
   async function setKind(kind, on) {
     try {
@@ -242,6 +268,7 @@
       <div class="cta">
         <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
         <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadIcon} size={16} /> {downloadLabel}</button>
+        <button class="btn" onclick={chooseRelease} disabled={releasesLoading}><Icon name="search" size={15} /> {releasesLoading ? 'Searching…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
 
@@ -310,6 +337,26 @@
     <section class="player">
       <video bind:this={videoEl} src="/api/stream/{film.id_tspdt}" controls autoplay playsinline ontimeupdate={onTimeUpdate}></video>
       {#if !watchInfo?.browser}<div class="rr-meta">Live iGPU transcode · seeking is limited until an encoded copy exists.</div>{/if}
+    </section>
+  {/if}
+
+  {#if releases}
+    <section class="block releases">
+      <div class="section-h">Releases · pick one to grab</div>
+      {#if releases.length === 0}
+        <p class="rr-meta">No releases found — Radarr searches on the film's year, so fix that first if it's wrong.</p>
+      {:else}
+        {#each releases as r}
+          <div class="rel" class:rej={r.rejected}>
+            <div class="rel-info">
+              <div class="rel-title">{r.title}</div>
+              <div class="rel-sub">{[r.quality, r.size ? gb(r.size) : null, r.seeders != null ? r.seeders + ' seeders' : null, r.languages.join('/'), r.indexer].filter(Boolean).join(' · ')}{r.score ? ' · CF ' + r.score : ''}</div>
+              {#if r.rejected && r.rejections.length}<div class="rel-rej">{r.rejections.slice(0, 2).join('; ')}</div>{/if}
+            </div>
+            <button class="btn sm" onclick={() => grab(r)}>Grab</button>
+          </div>
+        {/each}
+      {/if}
     </section>
   {/if}
 
@@ -437,6 +484,14 @@
   .player { margin-top: 30px; }
   .player video { width: 100%; max-height: 78vh; border-radius: 16px; background: #000;
     border: 1px solid var(--border-strong); box-shadow: var(--shadow); display: block; }
+
+  .releases .rel { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .rel-info { flex: 1; min-width: 0; }
+  .rel-title { font-size: 13.5px; word-break: break-word; line-height: 1.3; }
+  .rel-sub { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .rel-rej { font-size: 11.5px; color: #e5675c; margin-top: 3px; }
+  .rel.rej { opacity: .7; }
+  .btn.sm { padding: 7px 14px; font-size: 13px; flex: none; }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }

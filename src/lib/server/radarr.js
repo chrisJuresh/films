@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, RadarrError } from './radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, RadarrError } from './radarrClient.js';
 import { syncFilmDownloads } from './db.js';
 
 export { RadarrError };
@@ -44,6 +44,13 @@ export function getMovieFileInfo(imdbId) {
 
 export function cancelRadarr(imdbId) {
   return cancelDownload(imdbId, config());
+}
+
+export function getReleases(imdbId, year) {
+  return searchReleases(imdbId, config(), { year });
+}
+export function grabReleaseFor(guid, indexerId) {
+  return grabRelease(guid, indexerId, config());
 }
 
 // Refresh the film_download snapshot from Radarr's library, at most every 45s.

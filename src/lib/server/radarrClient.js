@@ -154,7 +154,9 @@ export async function libraryState(settings, fetchImpl = globalThis.fetch) {
   const state = new Map();
   for (const m of list) {
     byId.set(m.id, m);
-    if (m.imdbId && m.hasFile) state.set(m.imdbId, 'downloaded');
+    if (!m.imdbId) continue;
+    if (m.hasFile) state.set(m.imdbId, 'downloaded');
+    else if (m.monitored) state.set(m.imdbId, 'wanted');       // in Radarr, monitored, no file yet
   }
   try {
     const q = await requestRadarr(settings, 'queue/details', {}, fetchImpl);
@@ -167,6 +169,48 @@ export async function libraryState(settings, fetchImpl = globalThis.fetch) {
     }
   } catch { /* queue optional */ }
   return state;
+}
+
+/** Interactive search: ensure the film is in Radarr (added monitored, no auto-
+ *  search, with our year), then return the candidate releases so the user can
+ *  pick one instead of letting Radarr auto-grab. */
+export async function searchReleases(imdbId, settings, hints = {}, fetchImpl = globalThis.fetch) {
+  if (!/^tt\d{7,10}$/i.test(imdbId || '')) throw new RadarrError('This film has no usable IMDb ID.', 422);
+  const lookup = await requestRadarr(settings, `movie/lookup/imdb?imdbId=${encodeURIComponent(imdbId)}`, {}, fetchImpl);
+  if (!lookup?.tmdbId) throw new RadarrError('Radarr could not find this film.', 422);
+  const tmdbYear = lookup.year;
+  const catYear = Number.parseInt(hints.year, 10);
+  const useAlt = Number.isInteger(catYear) && catYear !== tmdbYear;
+
+  const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
+  let movie = Array.isArray(existing) ? existing[0] : null;
+  if (!movie?.id) {
+    movie = await requestRadarr(settings, 'movie', { method: 'POST', body: {
+      ...lookup, ...(useAlt ? { year: catYear, secondaryYear: tmdbYear } : {}),
+      qualityProfileId: settings.qualityProfileId, rootFolderPath: settings.rootFolderPath,
+      monitored: true, minimumAvailability: 'released', addOptions: { ...(lookup.addOptions || {}), searchForMovie: false }
+    } }, fetchImpl);
+  } else if (useAlt && movie.year !== catYear) {
+    const full = await requestRadarr(settings, `movie/${movie.id}`, {}, fetchImpl);
+    movie = await requestRadarr(settings, `movie/${movie.id}`, { method: 'PUT', body: { ...full, year: catYear, secondaryYear: tmdbYear } }, fetchImpl);
+  }
+
+  const rel = await requestRadarr(settings, `release?movieId=${movie.id}`, {}, fetchImpl);
+  const releases = (Array.isArray(rel) ? rel : []).map((r) => ({
+    guid: r.guid, indexerId: r.indexerId, indexer: r.indexer || null, protocol: r.protocol || null,
+    title: r.title, quality: r.quality?.quality?.name || null,
+    size: Number(r.size) || null, seeders: r.seeders ?? null,
+    languages: (r.languages || []).map((l) => l.name).filter(Boolean),
+    score: r.customFormatScore ?? 0, rejected: !!r.rejected, rejections: r.rejections || []
+  })).sort((a, b) => (b.score - a.score) || ((b.seeders || 0) - (a.seeders || 0)));
+  return { releases: releases.slice(0, 50) };
+}
+
+/** Grab a specific release the user chose. */
+export async function grabRelease(guid, indexerId, settings, fetchImpl = globalThis.fetch) {
+  if (!guid || indexerId == null) throw new RadarrError('A release id is required.', 400);
+  await requestRadarr(settings, 'release', { method: 'POST', body: { guid, indexerId } }, fetchImpl);
+  return { grabbed: true };
 }
 
 /** Server-side only: the film's actual file path + codecs (for transcoding).

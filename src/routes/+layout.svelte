@@ -152,14 +152,21 @@
       </button>
     </nav>
 
-    {#if data.downloads && (data.downloads.downloaded || data.downloads.downloading || data.downloads.error)}
+    {#if data.downloads && (data.downloads.downloaded || data.downloads.downloading || data.downloads.wanted || data.downloads.error)}
     <nav class="statuses dl">
       <button class="stat minor" class:on={radarrNow() === 'downloaded'} onclick={() => { navigate({ radarr: radarrNow() === 'downloaded' ? '' : 'downloaded' }); closeMenu(); }}>
         Downloaded <span>{data.downloads.downloaded}</span>
       </button>
+      {#if data.downloads.downloading}
       <button class="stat minor" class:on={radarrNow() === 'downloading'} onclick={() => { navigate({ radarr: radarrNow() === 'downloading' ? '' : 'downloading' }); closeMenu(); }}>
         Downloading <span>{data.downloads.downloading}</span>
       </button>
+      {/if}
+      {#if data.downloads.wanted}
+      <button class="stat minor" class:on={radarrNow() === 'wanted'} onclick={() => { navigate({ radarr: radarrNow() === 'wanted' ? '' : 'wanted' }); closeMenu(); }}>
+        Wanted <span>{data.downloads.wanted}</span>
+      </button>
+      {/if}
       {#if data.downloads.error}
       <button class="stat minor" class:on={radarrNow() === 'error'} onclick={() => { navigate({ radarr: radarrNow() === 'error' ? '' : 'error' }); closeMenu(); }}>
         Issues <span>{data.downloads.error}</span>

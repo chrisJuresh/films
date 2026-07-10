@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { downloadWithRadarrClient, radarrStatus, RadarrError } from '../src/lib/server/radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, searchReleases, grabRelease, RadarrError } from '../src/lib/server/radarrClient.js';
 
 const settings = () => ({
   baseUrl: new URL('http://radarr:7878/radarr/'),
@@ -197,6 +197,31 @@ test('radarrStatus returns not-present for a film Radarr does not have', async (
   const mock = mockFetch(jsonResponse({ tmdbId: 348 }), jsonResponse([]));
   const s = await radarrStatus('tt0078748', settings(), mock.fetch);
   assert.deepEqual(s, { present: false });
+});
+
+test('searchReleases returns candidate releases (higher seeders first at equal score)', async () => {
+  const mock = mockFetch(
+    jsonResponse(lookup),                                    // lookup (year 1979)
+    jsonResponse([{ id: 7, year: 1979, hasFile: false }]),   // movie?tmdbId
+    jsonResponse([
+      { guid: 'a', indexerId: 1, title: '720p x265', quality: { quality: { name: 'Bluray-720p' } }, size: 1e9, seeders: 5, customFormatScore: 0, rejected: false },
+      { guid: 'b', indexerId: 2, title: '1080p x264', quality: { quality: { name: 'Bluray-1080p' } }, size: 8e9, seeders: 50, customFormatScore: 0, rejected: false }
+    ])
+  );
+  const { releases } = await searchReleases('tt0078748', settings(), { year: 1979 }, mock.fetch);
+  assert.equal(releases.length, 2);
+  assert.equal(mock.calls[2].url.pathname, '/radarr/api/v3/release');
+  assert.equal(mock.calls[2].url.searchParams.get('movieId'), '7');
+  assert.equal(releases[0].title, '1080p x264');
+});
+
+test('grabRelease posts the chosen release guid + indexer', async () => {
+  const mock = mockFetch(jsonResponse({}));
+  const r = await grabRelease('abc', 3, settings(), mock.fetch);
+  assert.equal(r.grabbed, true);
+  assert.equal(mock.calls[0].url.pathname, '/radarr/api/v3/release');
+  assert.equal(mock.calls[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(mock.calls[0].options.body), { guid: 'abc', indexerId: 3 });
 });
 
 test('does not expose Radarr validation details to the browser-facing error', async () => {

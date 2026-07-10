@@ -230,7 +230,7 @@ export function queryFilms(p = {}) {
     where.push('EXISTS (SELECT 1 FROM film_age fa WHERE fa.id_tspdt = f.id_tspdt AND fa.min_age <= ?)');
     args.push(maxage);
   }
-  if (['downloaded', 'downloading', 'error'].includes(p.radarr)) {   // Radarr download-state filter
+  if (['downloaded', 'downloading', 'wanted', 'error'].includes(p.radarr)) {   // Radarr download-state filter
     where.push('EXISTS (SELECT 1 FROM film_download fd WHERE fd.id_tspdt = f.id_tspdt AND fd.state = ?)');
     args.push(p.radarr);
   }
@@ -389,7 +389,7 @@ export function syncFilmDownloads(stateByImdb) {
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 export function downloadCounts() {
-  const out = { downloaded: 0, downloading: 0, error: 0 };
+  const out = { downloaded: 0, downloading: 0, wanted: 0, error: 0 };
   for (const r of getDb().prepare('SELECT state, count(*) c FROM film_download GROUP BY state').all())
     if (r.state in out) out[r.state] = r.c;
   return out;
