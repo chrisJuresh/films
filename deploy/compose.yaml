@@ -1,26 +1,28 @@
-name: film
+name: films
 
 services:
-  # The tspdt/film site: a SvelteKit adapter-node server. It reads AND writes
-  # its SQLite DB (watchlist/seen + metadata cache) and poster cache, so those
-  # live on a host bind-mount (/srv/film) rather than inside the image.
+  # The films site: a SvelteKit adapter-node server. It reads AND writes its
+  # SQLite DB (watchlist/seen + metadata cache) and poster cache, so those live
+  # on a host bind-mount (/srv/films) rather than inside the image.
   #
-  # It is reached by the existing "which" cloudflared tunnel over the shared
-  # docker network as http://film:3000 -- no host/LAN port is opened for the
-  # tunnel (so Cloudflare Access can't be bypassed on the LAN). The 127.0.0.1
-  # port below is only for local health checks.
-  film:
-    container_name: film
-    image: ghcr.io/chrisjuresh/film:latest
+  # It is reached by the shared cloudflared tunnel over the `a3server` docker
+  # network as http://films:3000 (no host/LAN port for the tunnel, so Cloudflare
+  # Access can't be bypassed on the LAN). The 127.0.0.1 port is local health
+  # checks only.
+  films:
+    container_name: films
+    image: ghcr.io/chrisjuresh/films:latest
     build:
       context: ..
       dockerfile: deploy/Dockerfile
     restart: unless-stopped
     # Run as host user 'chris' (uid/gid 1001) so the container can write the
-    # bind-mounted /srv/film that chris owns.
+    # bind-mounted /srv/films that chris owns.
     user: "1001:1001"
     environment:
-      - ORIGIN=https://film.chrisj.uk
+      - ORIGIN=https://films.chrisj.uk
+      # TSPDT_* = the data source ("They Shoot Pictures, Don't They?"), not the
+      # project name. The DB is built by sync/tspdt_sync.py.
       - TSPDT_DB=/data/tspdt.db
       - TSPDT_IMG_DIR=/data/.postercache
       # Optional API keys (poster art + IMDb/RT/Metacritic). Empty = the site
@@ -28,32 +30,30 @@ services:
       - TSPDT_TMDB_KEY=${TSPDT_TMDB_KEY:-}
       - TSPDT_OMDB_KEY=${TSPDT_OMDB_KEY:-}
     volumes:
-      - /srv/film:/data          # tspdt.db (+ -wal/-shm) and .postercache
+      - /srv/films:/data          # tspdt.db (+ -wal/-shm) and .postercache
     ports:
-      - "127.0.0.1:8100:3000"    # local health checks only (not the tunnel path)
+      - "127.0.0.1:8100:3000"     # local health checks only (not the tunnel path)
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "com.centurylinklabs.watchtower.scope=film"
+      - "com.centurylinklabs.watchtower.scope=films"
     networks:
-      tunnel:
-        aliases: [film]          # tunnel ingress target: http://film:3000
+      a3server:
+        aliases: [films]          # tunnel ingress target: http://films:3000
 
-  # Auto-pulls new images CI pushes to GHCR. Scoped to 'film' so it only ever
+  # Auto-pulls new images CI pushes to GHCR. Scoped to 'films' so it only ever
   # touches this stack, never the rest of the homelab (which, jellyfin, ...).
   watchtower:
     image: nickfedor/watchtower:latest
     restart: unless-stopped
-    command: --interval 120 --cleanup --scope film --label-enable
+    command: --interval 120 --cleanup --scope films --label-enable
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     labels:
-      - "com.centurylinklabs.watchtower.scope=film"
+      - "com.centurylinklabs.watchtower.scope=films"
 
 networks:
-  # The running cloudflared tunnel lives on the "which" project's network.
-  # Attach 'film' to it (external) so that one tunnel can also serve this site.
-  # NOTE: this couples film to the which stack's network -- `docker compose
-  # down` on which removes it; bring both back up if that happens.
-  tunnel:
-    name: which_which
+  # Shared edge network for the a3server homelab: the single cloudflared tunnel
+  # (defined in the `which` project) and every origin it serves attach here.
+  # Created once with:  docker network create a3server
+  a3server:
     external: true

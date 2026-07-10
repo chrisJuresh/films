@@ -5,14 +5,20 @@ name: build-and-publish
 # or secrets to manage (uses the built-in GITHUB_TOKEN).
 #
 # NB: for Watchtower to pull without credentials, the resulting GHCR package
-# (ghcr.io/chrisjuresh/film) must be public, or the server must be logged in
+# (ghcr.io/chrisjuresh/films) must be public, or the server must be logged in
 # to GHCR. See deploy/README.md.
 
 on:
   push:
     branches: [main]
     paths:
-      - 'site/**'
+      - 'src/**'
+      - 'static/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'svelte.config.js'
+      - 'vite.config.js'
+      - '.npmrc'
       - 'deploy/Dockerfile'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
@@ -43,8 +49,8 @@ jobs:
           context: .
           file: deploy/Dockerfile
           push: true
-          tags: ghcr.io/chrisjuresh/film:latest
+          tags: ghcr.io/chrisjuresh/films:latest
           labels: |
-            org.opencontainers.image.source=https://github.com/chrisJuresh/tspdt
+            org.opencontainers.image.source=https://github.com/chrisJuresh/films
           cache-from: type=gha
           cache-to: type=gha,mode=max

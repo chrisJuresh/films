@@ -7,14 +7,16 @@
 #     built-ins + global fetch), so adapter-node's `build/` output is fully
 #     self-contained -- no node_modules to ship into the runtime stage.
 #
-# The database and poster cache are NOT baked in; they live on a host
-# bind-mount (see deploy/compose.yaml) so data survives image updates.
+# Build context is the repo root (see compose `context: ..`). The database and
+# poster cache are NOT baked in; they live on a host bind-mount at runtime.
 
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY site/package.json site/package-lock.json ./
+COPY package.json package-lock.json .npmrc ./
 RUN npm ci
-COPY site/ ./
+COPY svelte.config.js vite.config.js ./
+COPY src ./src
+COPY static ./static
 RUN npm run build
 
 FROM node:22-alpine
@@ -23,7 +25,7 @@ ENV NODE_ENV=production
 # adapter-node reads these at runtime. HOST/PORT bind inside the container;
 # ORIGIN tells SvelteKit its public URL (correct redirects + CSRF origin check
 # behind the Cloudflare tunnel).
-ENV HOST=0.0.0.0 PORT=3000 ORIGIN=https://film.chrisj.uk
+ENV HOST=0.0.0.0 PORT=3000 ORIGIN=https://films.chrisj.uk
 COPY --from=build /app/build ./build
 EXPOSE 3000
 CMD ["node", "build"]

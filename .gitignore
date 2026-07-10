@@ -2,24 +2,21 @@
 .env
 .env.*
 !.env.example
-site/.env
-site/.env.*
-!site/.env.example
 
-# --- dependencies / build output ---
-.venv/
+# --- node / SvelteKit (web app at repo root) ---
 node_modules/
-site/node_modules/
-site/.svelte-kit/
-site/build/
-site/package/
+/.svelte-kit/
+/build/
+/package/
+vite.config.js.timestamp-*
 
-# --- local caches / generated data ---
-site/.postercache/
+# --- python (sync/) ---
+.venv/
 __pycache__/
 *.pyc
 
-# --- large, regenerable data (rebuild with tspdt_sync.py) ---
+# --- local caches / generated data (rebuild with sync/tspdt_sync.py) ---
+.postercache/
 tspdt.db
 tspdt.db-shm
 tspdt.db-wal

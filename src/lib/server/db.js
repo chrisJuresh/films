@@ -1,11 +1,11 @@
-// Server-only data layer. Reads ../tspdt.db (built by tspdt_sync.py) via the
-// built-in node:sqlite module -- no native dependency to compile.
+// Server-only data layer. Reads the tspdt.db built by sync/tspdt_sync.py via
+// the built-in node:sqlite module -- no native dependency to compile.
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Find tspdt.db whether we're launched from ./ or ./site (dev/build/preview all differ).
+// Find tspdt.db whether launched from the repo root or elsewhere (dev/build/preview differ).
 const here = dirname(fileURLToPath(import.meta.url));
 
 // The connection is opened LAZILY on first query, not at module load. That lets
@@ -18,8 +18,9 @@ function getDb() {
   const CANDIDATES = [
     process.env.TSPDT_DB,
     resolve(process.cwd(), 'tspdt.db'),
-    resolve(process.cwd(), '..', 'tspdt.db'),
-    resolve(here, '../../../../tspdt.db') // site/src/lib/server -> project root
+    resolve(process.cwd(), 'sync', 'tspdt.db'),
+    resolve(here, '../../../tspdt.db'),      // src/lib/server -> repo root
+    resolve(here, '../../../sync/tspdt.db')  // repo root/sync
   ].filter(Boolean);
   const DB_PATH = CANDIDATES.find((p) => existsSync(p));
   if (!DB_PATH) {

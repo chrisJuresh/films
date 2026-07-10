@@ -1,9 +1,0 @@
-node_modules
-/build
-/.svelte-kit
-/package
-/.postercache
-.env
-.env.*
-!.env.example
-vite.config.js.timestamp-*

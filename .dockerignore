@@ -1,0 +1,19 @@
+# Build context is the repo root; the image only needs the web app. Keep the
+# rest (data pipeline, deploy config, git, caches, DBs) out of the context.
+.git
+.github
+.venv
+node_modules
+.svelte-kit
+build
+deploy
+sync
+README.md
+.env
+.env.*
+.postercache
+*.db
+*.db-shm
+*.db-wal
+StartingList.xls
+.claude
