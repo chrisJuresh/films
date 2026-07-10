@@ -27,5 +27,11 @@ tspdt.db-shm
 tspdt.db-wal
 StartingList.xls
 
+# --- tauri desktop (build artifacts) ---
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+desktop/src-tauri/icons/
+
 # --- local tooling ---
 .claude/
