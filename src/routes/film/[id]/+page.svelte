@@ -36,7 +36,7 @@
   let downloadLabel = $derived(
     downloadState === 'loading' ? 'Sending…' :
     downloadState === 'queued' ? 'Requested' :
-    downloadState === 'available' ? 'Downloaded' : 'Download'
+    downloadState === 'available' ? 'In library' : 'Download'
   );
   let downloadIcon = $derived(downloadState === 'queued' || downloadState === 'available' ? 'check' : 'download');
   // Age ratings: freshest from live enrichment, else the queryable film_cert set.
@@ -120,6 +120,12 @@
       const s = await r.json();
       if (loadedId !== id) return;
       radarr = s;
+      // Reflect Radarr's reality on the Download button: already in the library,
+      // or a download already in flight.
+      if (downloadState === 'idle') {
+        if (s?.hasFile) downloadState = 'available';
+        else if (s?.queue && !s.queue.error) downloadState = 'queued';
+      }
       clearTimeout(radarrTimer);
       if (s?.present && !s.hasFile && (s.queue || s.monitored)) {
         radarrTimer = setTimeout(() => loadRadarr(id), 5000);
@@ -187,22 +193,30 @@
 
       {#if radarr?.present}
         <div class="radarr">
-          {#if radarr.queue}
+          {#if radarr.queue && (radarr.queue.error || radarr.queue.health === 'error' || radarr.queue.health === 'warning')}
+            <div class="rr-row">
+              <span class="rr-label err"><Icon name="alert" size={13} /> Download problem</span>
+              <span class="rr-sub">{radarr.queue.quality || ''}</span>
+            </div>
+            {#if radarr.queue.error}<div class="rr-err">{radarr.queue.error}</div>{/if}
+            {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">{[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
+          {:else if radarr.queue}
             <div class="rr-row">
               <span class="rr-label">{radarr.queue.state === 'importPending' || radarr.queue.state === 'importing' ? 'Importing' : 'Downloading'}{radarr.queue.quality ? ' · ' + radarr.queue.quality : ''}</span>
               <span class="rr-sub">{radarr.queue.progress != null ? radarr.queue.progress + '%' : ''}{radarr.queue.timeleft ? ' · ' + radarr.queue.timeleft + ' left' : ''}</span>
             </div>
             <div class="rr-bar" class:indef={radarr.queue.progress == null}><span style="width:{radarr.queue.progress ?? 100}%"></span></div>
-            {#if radarr.queue.error}<div class="rr-err"><Icon name="alert" size={13} /> {radarr.queue.error}</div>{/if}
+            {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">via {[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
           {:else if radarr.hasFile}
             <div class="rr-row">
               <span class="rr-label ok"><Icon name="check" size={14} stroke={2.3} /> In your library</span>
               <span class="rr-sub">{[radarr.quality, radarr.resolution, radarr.videoCodec, gb(radarr.sizeOnDisk)].filter(Boolean).join(' · ')}</span>
             </div>
+            {#if radarr.releaseGroup}<div class="rr-meta">Release group · {radarr.releaseGroup}</div>{/if}
           {:else}
             <div class="rr-row">
               <span class="rr-label">In Radarr</span>
-              <span class="rr-sub">{radarr.monitored ? 'monitored · searching…' : 'not monitored'}</span>
+              <span class="rr-sub">{radarr.monitored ? 'monitored · searching…' : 'not monitored'}{radarr.movieStatus && radarr.movieStatus !== 'released' ? ' · ' + radarr.movieStatus : ''}</span>
             </div>
           {/if}
         </div>
@@ -316,7 +330,9 @@
   .rr-bar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .6s ease; }
   .rr-bar.indef span { width: 35% !important; animation: rr-indef 1.3s ease-in-out infinite; }
   @keyframes rr-indef { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
-  .rr-err { margin-top: 9px; font-size: 12px; color: #e5675c; display: flex; align-items: center; gap: 6px; }
+  .rr-err { margin-top: 8px; font-size: 12px; color: #e5675c; }
+  .rr-label.err { color: #e5675c; }
+  .rr-meta { margin-top: 7px; font-size: 11.5px; color: var(--faint); }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }

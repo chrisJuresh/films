@@ -63,7 +63,7 @@ test('adds a new movie and asks Radarr to search for it', async () => {
   });
 });
 
-test('adds the catalogue year as secondaryYear when it differs from TMDB', async () => {
+test('searches our catalogue year and keeps TMDB as secondaryYear', async () => {
   const mock = mockFetch(
     jsonResponse(lookup),                       // TMDB year 1979
     jsonResponse([]),
@@ -73,8 +73,8 @@ test('adds the catalogue year as secondaryYear when it differs from TMDB', async
   await downloadWithRadarrClient('tt0078748', settings(), mock.fetch, { year: '1975' });
 
   const body = JSON.parse(mock.calls[2].options.body);
-  assert.equal(body.secondaryYear, 1975);       // widen matching to our year
-  assert.equal(body.year, 1979);                // TMDB primary year untouched
+  assert.equal(body.year, 1975);                // Radarr searches indexers with OUR year
+  assert.equal(body.secondaryYear, 1979);       // TMDB kept as the matching net
 });
 
 test('omits secondaryYear when the catalogue year matches TMDB', async () => {
@@ -89,11 +89,11 @@ test('omits secondaryYear when the catalogue year matches TMDB', async () => {
   assert.equal('secondaryYear' in JSON.parse(mock.calls[2].options.body), false);
 });
 
-test('widens an already-added movie to the catalogue year, then searches', async () => {
+test('repoints an already-added movie to the catalogue year, then searches', async () => {
   const mock = mockFetch(
     jsonResponse(lookup),
     jsonResponse([{ id: 7, title: 'Alien', year: 1979, hasFile: false }]),
-    jsonResponse({ id: 7, title: 'Alien', year: 1979, secondaryYear: 1975 }),   // PUT
+    jsonResponse({ id: 7, title: 'Alien', year: 1975, secondaryYear: 1979 }),   // PUT
     jsonResponse({ id: 91, name: 'MoviesSearch' })                              // command
   );
 
@@ -102,7 +102,9 @@ test('widens an already-added movie to the catalogue year, then searches', async
   assert.equal(result.alreadyAdded, true);
   assert.equal(mock.calls[2].options.method, 'PUT');
   assert.equal(mock.calls[2].url.pathname, '/radarr/api/v3/movie/7');
-  assert.equal(JSON.parse(mock.calls[2].options.body).secondaryYear, 1975);
+  const put = JSON.parse(mock.calls[2].options.body);
+  assert.equal(put.year, 1975);
+  assert.equal(put.secondaryYear, 1979);
   assert.equal(mock.calls[3].url.pathname, '/radarr/api/v3/command');
 });
 

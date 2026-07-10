@@ -57,6 +57,7 @@
       if (!val) p.delete(k); else p.set(k, val);
     }
     p.delete('offset');
+    try { localStorage.setItem('tspdt-filters', p.toString()); } catch {}   // survive leaving + returning
     goto('/?' + p.toString(), { keepFocus: true, noScroll: true });
   }
   function toggle(key, val) {

@@ -19,6 +19,7 @@
     const [sort, order] = e.target.value.split('|');
     const p = new URLSearchParams(data.filters);
     p.set('sort', sort); p.set('order', order); p.delete('offset');
+    try { localStorage.setItem('tspdt-filters', p.toString()); } catch {}
     goto('/?' + p.toString(), { noScroll: true, keepFocus: true });
   }
 
@@ -51,6 +52,12 @@
   }
 
   onMount(() => {
+    // Restore the last-used filters when arriving at a bare "/" (logo, the
+    // film page's "← Catalogue" link, or a fresh visit).
+    const saved = localStorage.getItem('tspdt-filters');
+    if (saved && !window.location.search) {
+      goto('/?' + saved, { replaceState: true, noScroll: true, keepFocus: true });
+    }
     const io = new IntersectionObserver((es) => { if (es[0].isIntersecting) loadMore(); }, { rootMargin: '900px' });
     io.observe(sentinel);
     return () => io.disconnect();

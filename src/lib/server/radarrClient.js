@@ -76,12 +76,15 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
     throw new RadarrError('Radarr could not find this film from its IMDb ID.', 422);
   }
 
-  // Radarr keys releases off TMDB's year, which can differ from the year scene
-  // releases are actually tagged with (e.g. TMDB 1976 vs the 1975 our catalogue
-  // and the indexers use). Passing our year as Radarr's secondaryYear lets it
-  // match releases tagged with EITHER year, without overriding TMDB's primary.
-  const wantYear = Number.parseInt(hints.year, 10);
-  const altYear = Number.isInteger(wantYear) && wantYear !== lookup.year ? wantYear : null;
+  // Radarr SEARCHES indexers using the movie's PRIMARY year, which comes from
+  // TMDB and can differ from the year releases are actually tagged with (e.g.
+  // TMDB 1976 vs the 1975 our catalogue and the indexers use — secondaryYear
+  // only affects matching, not the search term). So when they differ we make
+  // Radarr search OUR year and keep TMDB's as secondaryYear, so it searches the
+  // year the release sites use yet still matches releases tagged with either.
+  const tmdbYear = lookup.year;
+  const catYear = Number.parseInt(hints.year, 10);
+  const useAlt = Number.isInteger(catYear) && catYear !== tmdbYear;
 
   const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
   const movie = Array.isArray(existing) ? existing[0] : null;
@@ -91,12 +94,12 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   }
 
   if (movie?.id) {
-    // Widen an already-added movie's matching to our year too (best-effort — a
+    // Point an already-added movie's search at our year (best-effort — a
     // failure here must not block the search).
-    if (altYear && movie.secondaryYear !== altYear && movie.year !== altYear) {
+    if (useAlt && movie.year !== catYear) {
       try {
         await requestRadarr(settings, `movie/${movie.id}`,
-          { method: 'PUT', body: { ...movie, secondaryYear: altYear } }, fetchImpl);
+          { method: 'PUT', body: { ...movie, year: catYear, secondaryYear: tmdbYear } }, fetchImpl);
       } catch { /* non-fatal */ }
     }
     await requestRadarr(settings, 'command', {
@@ -110,7 +113,7 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
     method: 'POST',
     body: {
       ...lookup,
-      ...(altYear ? { secondaryYear: altYear } : {}),
+      ...(useAlt ? { year: catYear, secondaryYear: tmdbYear } : {}),
       qualityProfileId: settings.qualityProfileId,
       rootFolderPath: settings.rootFolderPath,
       monitored: true,
@@ -140,7 +143,9 @@ export async function radarrStatus(imdbId, settings, fetchImpl = globalThis.fetc
   let queue = null;
   try {
     const q = await requestRadarr(settings, `queue/details?movieIds=${movie.id}`, {}, fetchImpl);
-    const item = Array.isArray(q) ? (q.find((x) => x.movieId === movie.id) || q[0]) : null;
+    // Filter strictly to THIS movie — no fallback to q[0], which would show
+    // another film's download here.
+    const item = Array.isArray(q) ? q.find((x) => x.movieId === movie.id) : null;
     if (item) {
       const size = Number(item.size) || 0;
       const left = Number(item.sizeleft ?? 0);
@@ -148,8 +153,12 @@ export async function radarrStatus(imdbId, settings, fetchImpl = globalThis.fetc
       queue = {
         progress: size > 0 ? Math.max(0, Math.min(100, Math.round((1 - left / size) * 100))) : null,
         state: item.trackedDownloadState || item.status || null,   // downloading | importPending | ...
+        health: item.trackedDownloadStatus || null,                // ok | warning | error
         timeleft: item.timeleft && item.timeleft !== '00:00:00' ? item.timeleft : null,
         quality: item.quality?.quality?.name || null,
+        protocol: item.protocol || null,                           // torrent | usenet
+        indexer: item.indexer || null,
+        client: item.downloadClient || null,
         error: item.errorMessage || (msgs.length ? msgs.join('; ') : null)
       };
     }
@@ -160,10 +169,13 @@ export async function radarrStatus(imdbId, settings, fetchImpl = globalThis.fetc
     present: true,
     monitored: !!movie.monitored,
     hasFile: !!movie.hasFile,
+    movieStatus: movie.status || null,                             // announced | inCinemas | released
     quality: mf?.quality?.quality?.name || null,
     resolution: mf?.mediaInfo?.resolution || null,
     videoCodec: mf?.mediaInfo?.videoCodec || null,
     audioChannels: mf?.mediaInfo?.audioChannels || null,
+    audioCodec: mf?.mediaInfo?.audioCodec || null,
+    releaseGroup: mf?.releaseGroup || null,
     sizeOnDisk: Number(movie.sizeOnDisk) || Number(mf?.size) || null,
     queue
   };
