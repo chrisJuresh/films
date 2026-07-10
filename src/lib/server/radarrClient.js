@@ -61,7 +61,7 @@ async function requestRadarr(settings, path, options = {}, fetchImpl = globalThi
  * Ensure a film is in Radarr and ask Radarr to find a release for it.
  * Returns `available` when Radarr already has a file and `queued` otherwise.
  */
-export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = globalThis.fetch) {
+export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = globalThis.fetch, hints = {}) {
   if (!/^tt\d{7,10}$/i.test(imdbId || '')) {
     throw new RadarrError('This film has no usable IMDb ID for Radarr.', 422);
   }
@@ -76,6 +76,13 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
     throw new RadarrError('Radarr could not find this film from its IMDb ID.', 422);
   }
 
+  // Radarr keys releases off TMDB's year, which can differ from the year scene
+  // releases are actually tagged with (e.g. TMDB 1976 vs the 1975 our catalogue
+  // and the indexers use). Passing our year as Radarr's secondaryYear lets it
+  // match releases tagged with EITHER year, without overriding TMDB's primary.
+  const wantYear = Number.parseInt(hints.year, 10);
+  const altYear = Number.isInteger(wantYear) && wantYear !== lookup.year ? wantYear : null;
+
   const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
   const movie = Array.isArray(existing) ? existing[0] : null;
 
@@ -84,6 +91,14 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   }
 
   if (movie?.id) {
+    // Widen an already-added movie's matching to our year too (best-effort — a
+    // failure here must not block the search).
+    if (altYear && movie.secondaryYear !== altYear && movie.year !== altYear) {
+      try {
+        await requestRadarr(settings, `movie/${movie.id}`,
+          { method: 'PUT', body: { ...movie, secondaryYear: altYear } }, fetchImpl);
+      } catch { /* non-fatal */ }
+    }
     await requestRadarr(settings, 'command', {
       method: 'POST',
       body: { name: 'MoviesSearch', movieIds: [movie.id] }
@@ -95,6 +110,7 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
     method: 'POST',
     body: {
       ...lookup,
+      ...(altYear ? { secondaryYear: altYear } : {}),
       qualityProfileId: settings.qualityProfileId,
       rootFolderPath: settings.rootFolderPath,
       monitored: true,

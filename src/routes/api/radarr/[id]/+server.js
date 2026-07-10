@@ -12,7 +12,7 @@ export async function POST({ params }) {
   if (!film) return json({ message: 'Film not found.' }, { status: 404 });
 
   try {
-    return json(await downloadWithRadarr(film.imdb_id));
+    return json(await downloadWithRadarr(film.imdb_id, film.year));
   } catch (cause) {
     if (cause instanceof RadarrError) {
       return json({ message: cause.message }, { status: cause.status });

@@ -29,6 +29,6 @@ function config() {
   return { baseUrl, apiKey, rootFolderPath, qualityProfileId };
 }
 
-export function downloadWithRadarr(imdbId) {
-  return downloadWithRadarrClient(imdbId, config());
+export function downloadWithRadarr(imdbId, year) {
+  return downloadWithRadarrClient(imdbId, config(), undefined, { year });
 }

@@ -63,6 +63,49 @@ test('adds a new movie and asks Radarr to search for it', async () => {
   });
 });
 
+test('adds the catalogue year as secondaryYear when it differs from TMDB', async () => {
+  const mock = mockFetch(
+    jsonResponse(lookup),                       // TMDB year 1979
+    jsonResponse([]),
+    jsonResponse({ id: 42, title: 'Alien' })
+  );
+
+  await downloadWithRadarrClient('tt0078748', settings(), mock.fetch, { year: '1975' });
+
+  const body = JSON.parse(mock.calls[2].options.body);
+  assert.equal(body.secondaryYear, 1975);       // widen matching to our year
+  assert.equal(body.year, 1979);                // TMDB primary year untouched
+});
+
+test('omits secondaryYear when the catalogue year matches TMDB', async () => {
+  const mock = mockFetch(
+    jsonResponse(lookup),
+    jsonResponse([]),
+    jsonResponse({ id: 42, title: 'Alien' })
+  );
+
+  await downloadWithRadarrClient('tt0078748', settings(), mock.fetch, { year: 1979 });
+
+  assert.equal('secondaryYear' in JSON.parse(mock.calls[2].options.body), false);
+});
+
+test('widens an already-added movie to the catalogue year, then searches', async () => {
+  const mock = mockFetch(
+    jsonResponse(lookup),
+    jsonResponse([{ id: 7, title: 'Alien', year: 1979, hasFile: false }]),
+    jsonResponse({ id: 7, title: 'Alien', year: 1979, secondaryYear: 1975 }),   // PUT
+    jsonResponse({ id: 91, name: 'MoviesSearch' })                              // command
+  );
+
+  const result = await downloadWithRadarrClient('tt0078748', settings(), mock.fetch, { year: '1975' });
+
+  assert.equal(result.alreadyAdded, true);
+  assert.equal(mock.calls[2].options.method, 'PUT');
+  assert.equal(mock.calls[2].url.pathname, '/radarr/api/v3/movie/7');
+  assert.equal(JSON.parse(mock.calls[2].options.body).secondaryYear, 1975);
+  assert.equal(mock.calls[3].url.pathname, '/radarr/api/v3/command');
+});
+
 test('searches an existing movie that has no file', async () => {
   const mock = mockFetch(
     jsonResponse(lookup),
