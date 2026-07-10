@@ -1,6 +1,14 @@
-import { counts, getFacets } from '$lib/server/db.js';
+import { counts, getFacets, downloadCounts } from '$lib/server/db.js';
 import { metaProviders } from '$lib/server/meta.js';
+import { refreshDownloadState } from '$lib/server/radarr.js';
 
 export function load({ locals }) {
-  return { counts: counts(locals.user), meta: metaProviders(), facets: getFacets(), user: locals.user };
+  refreshDownloadState();   // fire-and-forget, TTL-guarded, graceful
+  return {
+    counts: counts(locals.user),
+    meta: metaProviders(),
+    facets: getFacets(),
+    user: locals.user,
+    downloads: downloadCounts()
+  };
 }

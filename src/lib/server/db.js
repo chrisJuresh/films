@@ -87,6 +87,11 @@ function getDb() {
       updated_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (cf_user, id_tspdt)
     );
+    CREATE TABLE IF NOT EXISTS film_download (
+      id_tspdt INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      state    TEXT NOT NULL             -- downloaded | downloading | error
+    );
+    CREATE INDEX IF NOT EXISTS film_download_state ON film_download(state);
   `);
   // Migration: older DBs created user_status with CHECK IN ('watchlist','seen').
   // Rebuild it (preserving every row) so 'rewatch' / 'unfinished' are allowed.
@@ -225,6 +230,10 @@ export function queryFilms(p = {}) {
     where.push('EXISTS (SELECT 1 FROM film_age fa WHERE fa.id_tspdt = f.id_tspdt AND fa.min_age <= ?)');
     args.push(maxage);
   }
+  if (['downloaded', 'downloading', 'error'].includes(p.radarr)) {   // Radarr download-state filter
+    where.push('EXISTS (SELECT 1 FROM film_download fd WHERE fd.id_tspdt = f.id_tspdt AND fd.state = ?)');
+    args.push(p.radarr);
+  }
 
   // Per-user joins: site status (us) + Letterboxd watched state (lb) for THIS user.
   const joins = `LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
@@ -361,6 +370,29 @@ export function setPlayback(user, id, position, duration) {
 }
 export function getPlayback(user, id) {
   return getDb().prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, id) || null;
+}
+
+/* ---------------------------------------------- Radarr download state ---- */
+// Replace film_download with a fresh snapshot mapping our films to Radarr's
+// download state. stateByImdb: iterable of [imdbId, state].
+export function syncFilmDownloads(stateByImdb) {
+  const db = getDb();
+  const sel = db.prepare('SELECT id_tspdt FROM films WHERE imdb_id = ?');
+  const rows = [];
+  for (const [imdb, st] of stateByImdb) { const r = imdb && sel.get(imdb); if (r) rows.push([r.id_tspdt, st]); }
+  db.exec('BEGIN');
+  try {
+    db.exec('DELETE FROM film_download');
+    const ins = db.prepare('INSERT OR REPLACE INTO film_download(id_tspdt, state) VALUES(?,?)');
+    for (const [id, st] of rows) ins.run(id, st);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+}
+export function downloadCounts() {
+  const out = { downloaded: 0, downloading: 0, error: 0 };
+  for (const r of getDb().prepare('SELECT state, count(*) c FROM film_download GROUP BY state').all())
+    if (r.state in out) out[r.state] = r.c;
+  return out;
 }
 
 /* ------------------------------------------------- age-rating certs ------ */

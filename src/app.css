@@ -86,6 +86,7 @@ input, button, select { font-family: inherit; }
 .stat span { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .stat.on span { color: var(--accent); }
 .stat.minor { font-size: 13px; color: var(--faint); }   /* rewatch / unfinished: quieter than the primary three */
+.statuses.dl { margin-top: 2px; padding-top: 8px; border-top: 1px solid var(--border); }
 
 .filters { display: flex; flex-direction: column; gap: 18px; }
 .fhead { display: flex; justify-content: space-between; align-items: center; }

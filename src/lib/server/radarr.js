@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, RadarrError } from './radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, RadarrError } from './radarrClient.js';
+import { syncFilmDownloads } from './db.js';
 
 export { RadarrError };
 
@@ -43,4 +44,14 @@ export function getMovieFileInfo(imdbId) {
 
 export function cancelRadarr(imdbId) {
   return cancelDownload(imdbId, config());
+}
+
+// Refresh the film_download snapshot from Radarr's library, at most every 45s.
+// Fire-and-forget + graceful: a missing/unreachable Radarr just leaves the last
+// snapshot in place.
+let _lastDownloadSync = 0;
+export async function refreshDownloadState() {
+  if (Date.now() - _lastDownloadSync < 45000) return;
+  _lastDownloadSync = Date.now();
+  try { syncFilmDownloads(await libraryState(config())); } catch { /* radarr off/unreachable */ }
 }

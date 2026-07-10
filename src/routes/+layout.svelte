@@ -49,6 +49,7 @@
   const sel = (key) => ($page.url.searchParams.get(key) || '').split(',').filter(Boolean);
   const isSel = (key, val) => sel(key).includes(String(val));
   const statusNow = () => $page.url.searchParams.get('status') || '';
+  const radarrNow = () => $page.url.searchParams.get('radarr') || '';
 
   function navigate(patch) {
     const p = new URLSearchParams($page.url.searchParams);
@@ -75,10 +76,10 @@
   }
 
   let activeCount = $derived(
-    ['q', 'decade', 'genre', 'country', 'colour', 'maxage', 'new'].reduce(
+    ['q', 'decade', 'genre', 'country', 'colour', 'maxage', 'radarr', 'new'].reduce(
       (n, k) => n + (($page.url.searchParams.get(k) || '') ? 1 : 0), 0)
   );
-  function clearAll() { navigate({ q: '', decade: '', genre: '', country: '', colour: '', maxage: '', new: '' }); }
+  function clearAll() { navigate({ q: '', decade: '', genre: '', country: '', colour: '', maxage: '', radarr: '', new: '' }); }
 
   let userEmail = $derived(data?.user || null);
 
@@ -150,6 +151,22 @@
         Unfinished <span>{$countsStore.unfinished}</span>
       </button>
     </nav>
+
+    {#if data.downloads && (data.downloads.downloaded || data.downloads.downloading || data.downloads.error)}
+    <nav class="statuses dl">
+      <button class="stat minor" class:on={radarrNow() === 'downloaded'} onclick={() => { navigate({ radarr: radarrNow() === 'downloaded' ? '' : 'downloaded' }); closeMenu(); }}>
+        Downloaded <span>{data.downloads.downloaded}</span>
+      </button>
+      <button class="stat minor" class:on={radarrNow() === 'downloading'} onclick={() => { navigate({ radarr: radarrNow() === 'downloading' ? '' : 'downloading' }); closeMenu(); }}>
+        Downloading <span>{data.downloads.downloading}</span>
+      </button>
+      {#if data.downloads.error}
+      <button class="stat minor" class:on={radarrNow() === 'error'} onclick={() => { navigate({ radarr: radarrNow() === 'error' ? '' : 'error' }); closeMenu(); }}>
+        Issues <span>{data.downloads.error}</span>
+      </button>
+      {/if}
+    </nav>
+    {/if}
 
     <div class="filters">
       <div class="fhead">
