@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { displayTitle } from '../util.js';
+import { filmMinAge } from './certAge.mjs';
 
 // Find tspdt.db whether launched from the repo root or elsewhere (dev/build/preview differ).
 const here = dirname(fileURLToPath(import.meta.url));
@@ -67,6 +68,11 @@ function getDb() {
       PRIMARY KEY (id_tspdt, country, cert)
     );
     CREATE INDEX IF NOT EXISTS film_cert_cert ON film_cert(cert);
+    CREATE TABLE IF NOT EXISTS film_age (
+      id_tspdt INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      min_age  INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS film_age_age ON film_age(min_age);
     CREATE TABLE IF NOT EXISTS film_meta (
       id_tspdt      INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
       level         TEXT,
@@ -95,8 +101,30 @@ function getDb() {
       COMMIT;
     `);
   }
+  // One-time: derive film_age from the already-downloaded film_cert data (no
+  // network). Runs once — when certs exist but no ages have been computed yet.
+  const cov = db.prepare('SELECT (SELECT count(*) FROM film_cert) certs, (SELECT count(*) FROM film_age) ages').get();
+  if (cov.certs > 0 && cov.ages === 0) recomputeFilmAges(db);
   _db = db;
   return _db;
+}
+
+// Rebuild film_age from film_cert using the shared cert→age mapping. Pure
+// compute (no network), safe to re-run; used for the one-time bulk derivation.
+function recomputeFilmAges(db) {
+  const rows = db.prepare('SELECT id_tspdt, country, cert FROM film_cert ORDER BY id_tspdt').all();
+  const ins = db.prepare('INSERT INTO film_age(id_tspdt, min_age) VALUES(?,?) ON CONFLICT(id_tspdt) DO UPDATE SET min_age=excluded.min_age');
+  db.exec('BEGIN');
+  try {
+    let cur = null, certs = [];
+    const flush = () => { if (cur != null) { const a = filmMinAge(certs); if (a != null) ins.run(cur, a); } };
+    for (const r of rows) {
+      if (r.id_tspdt !== cur) { flush(); cur = r.id_tspdt; certs = []; }
+      certs.push({ country: r.country, cert: r.cert });
+    }
+    flush();
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
 }
 
 /* -------------------------------------------------------------- facets ---- */
@@ -126,6 +154,13 @@ export function getFacets() {
      FROM film_cert fc JOIN films f USING(id_tspdt)
      WHERE f.removed_at IS NULL AND f.latest_rank IS NOT NULL
      GROUP BY fc.cert ORDER BY count DESC, value LIMIT 80`
+  ).all();
+  // Age-rating distribution (min admittance age -> film count) for the slider.
+  const ages = db.prepare(
+    `SELECT fa.min_age AS age, count(*) AS count
+     FROM film_age fa JOIN films f USING(id_tspdt)
+     WHERE f.removed_at IS NULL AND f.latest_rank IS NOT NULL
+     GROUP BY fa.min_age ORDER BY fa.min_age`
   ).all();
   _facets = {
     total,
@@ -167,11 +202,19 @@ export function queryFilms(p = {}) {
   const colours = multi(p.colour);
   if (colours.length) { where.push('f.colour IN (' + colours.map(() => '?').join(',') + ')'); colours.forEach((c) => args.push(c)); }
   if (p.new === '1' || p.new === true) where.push('f.is_new = 1');
-  const certs = multi(p.cert);   // age-rating filter: film matches if it has ANY selected cert
+  const certs = multi(p.cert);   // (legacy) match if the film has ANY selected raw cert
   if (certs.length) {
     where.push('EXISTS (SELECT 1 FROM film_cert fc WHERE fc.id_tspdt = f.id_tspdt AND fc.cert IN ('
       + certs.map(() => '?').join(',') + '))');
     certs.forEach((c) => args.push(c));
+  }
+  // Age slider: show films suitable for viewers up to `maxage`. A film's age is
+  // its most-restrictive rating, so nothing unsuitable slips into a younger
+  // bracket. At/above 18 the slider is off (everything, incl. unrated, shows).
+  const maxage = (p.maxage === '' || p.maxage == null) ? null : Math.trunc(+p.maxage);
+  if (maxage != null && !Number.isNaN(maxage) && maxage < 18) {
+    where.push('EXISTS (SELECT 1 FROM film_age fa WHERE fa.id_tspdt = f.id_tspdt AND fa.min_age <= ?)');
+    args.push(maxage);
   }
 
   // Per-user joins: site status (us) + Letterboxd watched state (lb) for THIS user.
@@ -305,10 +348,15 @@ export function setFilmCerts(id, certs) {
   const db = getDb();
   db.prepare('DELETE FROM film_cert WHERE id_tspdt = ?').run(id);
   const ins = db.prepare('INSERT OR IGNORE INTO film_cert(id_tspdt, country, cert) VALUES(?,?,?)');
+  const clean = [];
   for (const c of certs || []) {
     const cert = String(c?.cert ?? '').trim();
-    if (cert) ins.run(id, String(c.country ?? '').trim(), cert);
+    const country = String(c?.country ?? '').trim();
+    if (cert) { ins.run(id, country, cert); clean.push({ country, cert }); }
   }
+  const age = filmMinAge(clean);
+  if (age == null) db.prepare('DELETE FROM film_age WHERE id_tspdt=?').run(id);
+  else db.prepare('INSERT INTO film_age(id_tspdt, min_age) VALUES(?,?) ON CONFLICT(id_tspdt) DO UPDATE SET min_age=excluded.min_age').run(id, age);
 }
 
 /* --------------------------------------------------- letterboxd import --- */

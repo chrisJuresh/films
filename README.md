@@ -28,7 +28,10 @@ every published edition. Lives at **https://films.chrisj.uk**.
 2. (optional) API keys for poster art & ratings — copy `.env.example` to `.env`:
    - `TSPDT_TMDB_KEY` — https://www.themoviedb.org/settings/api
    - `TSPDT_OMDB_KEY` — http://www.omdbapi.com/apikey.aspx
-3. Run the site:
+3. (optional) Connect the film-page **Download** button to Radarr by setting all
+   four `RADARR_*` values documented in `.env.example`. The root folder must be
+   the path as Radarr sees it, and the quality profile is its numeric id.
+4. Run the site:
    ```sh
    npm install
    npm run dev        # http://localhost:5178

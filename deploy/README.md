@@ -16,8 +16,9 @@ TLS at Cloudflare's edge.
   - `/srv/films/.postercache/` — downloaded poster/backdrop art.
 
   The container attaches to the shared **`a3server`** docker network so the
-  cloudflared tunnel can reach it at `http://films:3000`. Only `127.0.0.1:8100`
-  is published on the host, for local health checks.
+  cloudflared tunnel can reach it at `http://films:3000`, and to the private
+  **`a3-arr`** network for Radarr. Only `127.0.0.1:8100` is published on the
+  host, for local health checks.
 - **watchtower** — auto-pulls new images CI pushes to GHCR. Scoped to `films`
   only, so it never touches the rest of the homelab.
 
@@ -76,7 +77,7 @@ python3 -m venv ~/films/.venv
 sudo mkdir -p /srv/films && sudo chown 1001:1001 /srv/films   # 1001 = chris
 cd /srv/films && ~/films/.venv/bin/python ~/films/sync/tspdt_sync.py
 
-# 2. (optional) API keys:
+# 2. (optional) Metadata and Radarr settings:
 cp ~/films/deploy/.env.example ~/films/deploy/.env   # then edit
 
 # 3. Build + start (CI publishes the image later; this builds it locally now):
@@ -86,6 +87,20 @@ docker compose build films
 docker compose up -d
 curl -sSf http://127.0.0.1:8100/ >/dev/null && echo "films is up"
 ```
+
+## Radarr Download button
+
+Set `RADARR_URL`, `RADARR_API_KEY`, `RADARR_ROOT_FOLDER`, and
+`RADARR_QUALITY_PROFILE_ID` in `deploy/.env`, then recreate the films service
+with `docker compose up -d films`. The URL must be reachable from inside the
+films container; this compose file joins Radarr's existing `a3-arr` network, so
+the `radarr` service resolves at `http://radarr:7878`. The root folder is the
+movie-library path as Radarr sees it. You can find profile ids from Radarr's
+`GET /api/v3/qualityprofile` endpoint.
+
+The API key stays in the SvelteKit server. A click looks the film up by its IMDb
+id, adds and searches it when new, searches it when it is already monitored but
+missing, and does nothing destructive when Radarr already has the file.
 
 ## Refreshing the catalogue (new TSPDT edition / data)
 

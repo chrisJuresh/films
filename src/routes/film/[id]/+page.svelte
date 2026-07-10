@@ -10,13 +10,14 @@
   let status = $state(data.film.status ?? null);      // site status: watchlist | seen | null
   let lbState = $state(data.film.lb_state ?? null);   // letterboxd: watched | unwatched | null
   let meta = $state(null);    // IMDb/TMDB enrichment
+  let downloadState = $state('idle'); // idle | loading | queued | available
 
   let loadedId;
   $effect(() => {
     const id = film.id_tspdt;
     status = film.status ?? null; lbState = film.lb_state ?? null;
     if (loadedId === id) return;
-    loadedId = id; meta = null;
+    loadedId = id; meta = null; downloadState = 'idle';
     fetch(`/api/meta/${id}`).then((r) => r.json())
       .then((mm) => { if (loadedId === id) meta = mm; }).catch(() => { if (loadedId === id) meta = { enabled: false }; });
   });
@@ -27,20 +28,24 @@
   let seen = $derived(status === 'seen' || lbWatched);
   let rewatch = $derived(status === 'rewatch');
   let unfinished = $derived(status === 'unfinished');
+  let downloadLabel = $derived(
+    downloadState === 'loading' ? '… Sending' :
+    downloadState === 'queued' ? '✓ Requested' :
+    downloadState === 'available' ? '✓ Downloaded' : '⬇ Download'
+  );
   // Age ratings: freshest from live enrichment, else the queryable film_cert set.
   let certs = $derived((ready && meta?.certifications?.length) ? meta.certifications : (film.certs || []));
 
-  // Watch / Download are intentionally open-ended: this app does NOT decide what
-  // they do. A click emits the film's stable identifiers so anything else can act
-  // on it — an API client, a companion app/service, a userscript, a home-media
-  // server, etc. Two integration seams, tried in order:
+  // Watch remains intentionally open-ended. A click emits the film's stable
+  // identifiers so a companion app, userscript, or media server can act on it.
+  // Two integration seams are tried in order:
   //   1) window.filmsHandleAction(detail)   — assign a function to handle it.
   //   2) a cancelable "films:action" CustomEvent dispatched on window; a listener
   //      calls detail's event.preventDefault() to signal it handled the action.
-  // detail = { action, id_tspdt, imdb_id, imdb_url, tmdb_id, title, year }.
-  function filmAction(action) {
+  // detail = { action: 'watch', id_tspdt, imdb_id, imdb_url, tmdb_id, title, year }.
+  function watchFilm() {
     const detail = {
-      action,                                   // 'watch' | 'download'
+      action: 'watch',
       id_tspdt: film.id_tspdt,
       imdb_id: film.imdb_id ?? null,
       imdb_url: film.imdb_url ?? null,
@@ -54,7 +59,30 @@
     const handled = !window.dispatchEvent(
       new CustomEvent('films:action', { detail, bubbles: true, cancelable: true })
     );
-    if (!handled) toast(`No “${action}” handler is wired up yet.`, 'info', 3200);
+    if (!handled) toast('No “watch” handler is wired up yet.', 'info', 3200);
+  }
+  async function downloadFilm() {
+    if (downloadState !== 'idle') return;
+    downloadState = 'loading';
+    try {
+      const response = await fetch(`/api/radarr/${film.id_tspdt}`, { method: 'POST' });
+      let result = {};
+      try { result = await response.json(); } catch { /* Use the fallback message below. */ }
+      if (!response.ok) throw new Error(result.message || 'Radarr could not start this download.');
+
+      const title = result.title || displayTitle(film.title);
+      downloadState = result.status === 'available' ? 'available' : 'queued';
+      if (downloadState === 'available') {
+        toast(`“${title}” is already downloaded in Radarr.`, 'info', 4200);
+      } else if (result.alreadyAdded) {
+        toast(`Radarr is searching for “${title}”.`, 'ok', 4200);
+      } else {
+        toast(`Added “${title}” to Radarr and started a search.`, 'ok', 4200);
+      }
+    } catch (cause) {
+      downloadState = 'idle';
+      toast(cause?.message || 'Could not connect to Radarr.', 'error', 4800);
+    }
   }
   async function setKind(kind, on) {
     try {
@@ -121,8 +149,8 @@
       </div>
 
       <div class="cta">
-        <button class="btn primary" onclick={() => filmAction('watch')}>▶ Watch</button>
-        <button class="btn" onclick={() => filmAction('download')}>⬇ Download</button>
+        <button class="btn primary" onclick={watchFilm}>▶ Watch</button>
+        <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}>{downloadLabel}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener">▷ Trailer</a>{/if}
       </div>
 
