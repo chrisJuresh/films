@@ -1,0 +1,2 @@
+# tspdt_sync.py dependencies (everything else is the Python standard library)
+xlrd>=2.0        # read legacy .xls (StartingList.xls is OLE2, not .xlsx)

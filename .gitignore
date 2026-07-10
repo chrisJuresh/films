@@ -1,0 +1,28 @@
+# --- secrets (never commit) ---
+.env
+.env.*
+!.env.example
+site/.env
+site/.env.*
+!site/.env.example
+
+# --- dependencies / build output ---
+node_modules/
+site/node_modules/
+site/.svelte-kit/
+site/build/
+site/package/
+
+# --- local caches / generated data ---
+site/.postercache/
+__pycache__/
+*.pyc
+
+# --- large, regenerable data (rebuild with tspdt_sync.py) ---
+tspdt.db
+tspdt.db-shm
+tspdt.db-wal
+StartingList.xls
+
+# --- local tooling ---
+.claude/
