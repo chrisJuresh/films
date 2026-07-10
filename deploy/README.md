@@ -28,10 +28,11 @@ Access** (SSO) — no open inbound ports, home IP hidden, TLS at Cloudflare's ed
 server pulls it within ~2 min. Rollback = re-run an older workflow or
 `docker compose pull` a pinned tag.
 
-> **One-time GitHub step:** make the `film` GHCR package **public** (GitHub →
-> your profile → Packages → `film` → Package settings → Change visibility), so
-> Watchtower can pull it without credentials. Otherwise run
-> `docker login ghcr.io` on the server once.
+> **GHCR visibility:** because the `tspdt` repo is public, the published `film`
+> package inherits public visibility, so Watchtower pulls it anonymously — no
+> action needed. If the repo is ever made private, either make the package
+> public (GitHub → Packages → `film` → Package settings → visibility) or run
+> `docker login ghcr.io` on the server and mount the config into Watchtower.
 
 ## Cloudflare (one-time, in the dashboard — can't be scripted from the server)
 
