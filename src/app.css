@@ -83,6 +83,8 @@ input, button, select { font-family: inherit; }
 .fhead > span { font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: var(--faint); }
 .clear { background: none; border: none; color: var(--accent); font-size: 12px; cursor: pointer; padding: 0; }
 .filters section h4 { margin: 0 0 9px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.fh { display: flex; justify-content: space-between; align-items: center; margin: 0 0 9px; }
+.fh h4 { margin: 0; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface);

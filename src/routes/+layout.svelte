@@ -155,7 +155,7 @@
       </section>
 
       <section>
-        <h4>Genre</h4>
+        <div class="fh"><h4>Genre</h4>{#if sel('genre').length}<button class="clear" onclick={() => navigate({ genre: '' })}>Reset</button>{/if}</div>
         <div class="checklist">
           {#each data.facets.genres as g}
             <label class="check" class:on={isSel('genre', g.value)}>
@@ -167,7 +167,7 @@
       </section>
 
       <section>
-        <h4>Country</h4>
+        <div class="fh"><h4>Country</h4>{#if sel('country').length}<button class="clear" onclick={() => navigate({ country: '' })}>Reset</button>{/if}</div>
         <input class="mini-search" placeholder="Filter countries" bind:value={countryQuery} />
         <div class="checklist">
           {#each countriesShown as c}
