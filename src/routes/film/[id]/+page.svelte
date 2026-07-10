@@ -8,42 +8,45 @@
   let film = $derived(data.film);
 
   let status = $state(data.film.status ?? null);
-  let avail = $state(null);   // Internet Archive availability (null = checking)
   let meta = $state(null);    // IMDb/TMDB enrichment
-  let watching = $state(false);
-  let playerEl;
 
   let loadedId;
   $effect(() => {
     const id = film.id_tspdt;
-    status = film.status ?? null; watching = false;
+    status = film.status ?? null;
     if (loadedId === id) return;
-    loadedId = id; avail = null; meta = null;
-    fetch(`/api/availability/${id}`).then((r) => r.json())
-      .then((a) => { if (loadedId === id) avail = a; }).catch(() => { if (loadedId === id) avail = { available: false }; });
+    loadedId = id; meta = null;
     fetch(`/api/meta/${id}`).then((r) => r.json())
       .then((mm) => { if (loadedId === id) meta = mm; }).catch(() => { if (loadedId === id) meta = { enabled: false }; });
   });
 
   let ready = $derived(meta && meta.enabled !== false);
 
-  function watch() {
-    if (avail?.available && avail.watch) {
-      watching = true;
-      setTimeout(() => playerEl?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
-    } else {
-      toast(`“${displayTitle(film.title)}” isn’t available to stream in the catalogue.`, 'info', 3600);
+  // Watch / Download are intentionally open-ended: this app does NOT decide what
+  // they do. A click emits the film's stable identifiers so anything else can act
+  // on it — an API client, a companion app/service, a userscript, a home-media
+  // server, etc. Two integration seams, tried in order:
+  //   1) window.filmsHandleAction(detail)   — assign a function to handle it.
+  //   2) a cancelable "films:action" CustomEvent dispatched on window; a listener
+  //      calls detail's event.preventDefault() to signal it handled the action.
+  // detail = { action, id_tspdt, imdb_id, imdb_url, tmdb_id, title, year }.
+  function filmAction(action) {
+    const detail = {
+      action,                                   // 'watch' | 'download'
+      id_tspdt: film.id_tspdt,
+      imdb_id: film.imdb_id ?? null,
+      imdb_url: film.imdb_url ?? null,
+      tmdb_id: (ready && meta?.tmdb_id) || null,
+      title: displayTitle(film.title),
+      year: film.year ?? null
+    };
+    if (typeof window.filmsHandleAction === 'function') {
+      try { window.filmsHandleAction(detail); return; } catch { /* fall through to the event */ }
     }
-  }
-  function download() {
-    if (avail?.available && avail.download) {
-      const a = document.createElement('a');
-      a.href = avail.download; a.target = '_blank'; a.rel = 'noopener';
-      document.body.appendChild(a); a.click(); a.remove();
-      toast('Opening file…', 'ok');
-    } else {
-      toast(`“${displayTitle(film.title)}” isn’t available to download in the catalogue.`, 'info', 3600);
-    }
+    const handled = !window.dispatchEvent(
+      new CustomEvent('films:action', { detail, bubbles: true, cancelable: true })
+    );
+    if (!handled) toast(`No “${action}” handler is wired up yet.`, 'info', 3200);
   }
   async function setStatus(next) {
     const want = status === next ? null : next;
@@ -99,12 +102,11 @@
         {#if runtime}<span class="chip">{runtime} min</span>{/if}
         {#if ready && meta.certification}<span class="chip">{meta.certification}</span>{/if}
         {#if film.colour && film.colour !== '---'}<span class="chip">{colourLabel(film.colour)}</span>{/if}
-        {#if avail?.available}<span class="chip avail">Available to stream</span>{/if}
       </div>
 
       <div class="cta">
-        <button class="btn primary" onclick={watch} disabled={avail === null}>{avail === null ? 'Checking…' : '▶ Watch'}</button>
-        <button class="btn" onclick={download} disabled={avail === null}>⬇ Download</button>
+        <button class="btn primary" onclick={() => filmAction('watch')}>▶ Watch</button>
+        <button class="btn" onclick={() => filmAction('download')}>⬇ Download</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener">▷ Trailer</a>{/if}
       </div>
 
@@ -154,13 +156,6 @@
     </section>
   {/if}
 
-  {#if watching && avail?.watch}
-    <section class="player" bind:this={playerEl}>
-      <div class="player-frame"><iframe src={avail.watch} title="Player" allowfullscreen allow="fullscreen"></iframe></div>
-      <button class="close-player" onclick={() => (watching = false)}>✕ Close player</button>
-    </section>
-  {/if}
-
   <section class="block">
     <div class="section-h">Ranking history · {film.history.length} editions</div>
     <Sparkline history={film.history} />
@@ -194,8 +189,6 @@
   .chip { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface-2); color: var(--muted); }
   .chip.rank { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
-  .chip.avail { background: color-mix(in srgb, var(--free) 18%, transparent); color: var(--free);
-    border-color: color-mix(in srgb, var(--free) 45%, var(--border)); font-weight: 600; }
 
   .cta { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn { padding: 13px 22px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2);
@@ -229,16 +222,15 @@
   .facts dt { color: var(--faint); }
   .facts dd { margin: 0; }
 
-  .player { margin-top: 34px; }
-  .player-frame { position: relative; aspect-ratio: 16/9; border-radius: 16px; overflow: hidden;
-    border: 1px solid var(--border-strong); box-shadow: var(--shadow); background: #000; }
-  .player-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
-  .close-player { margin-top: 10px; padding: 8px 14px; border-radius: 9px; border: 1px solid var(--border);
-    background: var(--surface-2); color: var(--muted); font-size: 13px; cursor: pointer; }
-
   @media (max-width: 720px) {
-    .top { grid-template-columns: 1fr; }
-    .poster-col { position: static; max-width: 220px; }
+    .detail { padding: 18px 16px 60px; }
+    .backdrop { height: 340px; }
+    .top { grid-template-columns: 1fr; gap: 22px; }
+    .poster-col { position: static; max-width: 190px; }
     .facts { grid-template-columns: 104px 1fr; }
+    /* CTAs fill the row instead of leaving ragged gaps when they wrap. */
+    .cta { gap: 10px; }
+    .cta .btn { flex: 1 1 42%; justify-content: center; padding: 13px 14px; }
+    .block { margin-top: 28px; padding-top: 22px; }
   }
 </style>

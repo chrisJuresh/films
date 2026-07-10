@@ -62,7 +62,6 @@
     border-radius: 7px; font-variant-numeric: tabular-nums; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
   .badge { position: absolute; top: 9px; right: 9px; z-index: 2; font-size: 10px; font-weight: 700;
     letter-spacing: .05em; padding: 3px 7px; border-radius: 6px; }
-  .badge.free { background: var(--free); color: #06210b; }
   .badge.new { background: color-mix(in srgb, var(--accent) 34%, #000 24%); color: #fff; }
   .acts { position: absolute; inset: auto 0 0 0; z-index: 3; display: flex; gap: 8px;
     justify-content: center; padding: 12px; border-radius: 0 0 14px 14px;
@@ -80,4 +79,11 @@
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .s { color: var(--muted); font-size: 12px; margin-top: 3px; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; }
+
+  /* Touch devices have no hover to reveal the actions, so show them always.
+     Mouse (hover:hover) devices are unaffected — desktop is unchanged. */
+  @media (hover: none) {
+    .acts { opacity: 1; transform: none; }
+    .card:active .pw { transform: scale(.985); }
+  }
 </style>

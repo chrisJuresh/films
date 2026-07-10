@@ -24,18 +24,3 @@ export function gradientFor(title) {
 export function colourLabel(c) {
   return c === 'BW' ? 'Black & White' : c === 'Col' ? 'Colour' : c === 'Col-BW' ? 'Colour / B&W' : c;
 }
-
-/** Legal "where to watch" search deep-links. */
-export function watchLinks(film) {
-  const t = encodeURIComponent(displayTitle(film.title));
-  const links = [
-    { name: 'JustWatch', url: `https://www.justwatch.com/us/search?q=${t}`, free: false },
-    { name: 'Criterion', url: `https://www.criterionchannel.com/search?q=${t}`, free: false },
-    { name: 'MUBI', url: `https://mubi.com/en/search/films?query=${t}`, free: false },
-    { name: 'Kanopy · library', url: `https://www.kanopy.com/en/search?query=${t}`, free: true },
-    { name: 'Internet Archive', url: `https://archive.org/search?query=${t}`, free: true },
-    { name: 'Letterboxd', url: `https://letterboxd.com/search/${t}/`, free: false }
-  ];
-  if (film.imdb_url) links.push({ name: 'IMDb', url: film.imdb_url, free: false });
-  return links;
-}

@@ -18,6 +18,15 @@
   let countryQuery = $state('');
   let themeName = $state('dark');
   let searchFocused = $state(false);
+  let menuOpen = $state(false);          // mobile filter drawer
+
+  const closeMenu = () => (menuOpen = false);
+
+  // Lock background scroll while the drawer is open (mobile only).
+  $effect(() => {
+    document.body.style.overflow = menuOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  });
 
   // Sync the box from the URL (tab links, back/forward) — but never while the
   // user is actively typing, or their keystrokes would be clobbered.
@@ -28,6 +37,12 @@
   onMount(() => {
     const t = localStorage.getItem('tspdt-theme') || 'dark';
     themeName = t; document.documentElement.dataset.theme = t;
+    // If the drawer is open and the viewport grows to desktop, close it so the
+    // scroll lock is released and the sidebar reverts to its docked layout.
+    const mq = window.matchMedia('(min-width: 821px)');
+    const onWide = (e) => { if (e.matches) menuOpen = false; };
+    mq.addEventListener('change', onWide);
+    return () => mq.removeEventListener('change', onWide);
   });
 
   const sel = (key) => ($page.url.searchParams.get(key) || '').split(',').filter(Boolean);
@@ -74,9 +89,25 @@
   );
 </script>
 
+{#if !onFilm}
+<header class="mobilebar">
+  <button class="mb-burger" onclick={() => (menuOpen = true)} aria-label="Open filters and menu" aria-expanded={menuOpen}>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+  </button>
+  <a class="mb-home" href="/" aria-label="Home">◆</a>
+  <div class="mb-search search">
+    <svg viewBox="0 0 24 24" class="search-ico" aria-hidden="true"><path d="M21 21l-4.3-4.3M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></svg>
+    <input type="search" placeholder="Search title or director" value={q} oninput={onSearch}
+           onfocus={() => (searchFocused = true)} onblur={() => (searchFocused = false)} autocomplete="off" />
+  </div>
+</header>
+{/if}
+
 <div class="app" class:full={onFilm}>
   {#if !onFilm}
-  <aside class="sidebar">
+  <div class="scrim" class:show={menuOpen} onclick={closeMenu} aria-hidden="true"></div>
+  <aside class="sidebar" class:open={menuOpen}>
+    <button class="drawer-close" onclick={closeMenu} aria-label="Close menu">✕</button>
     <a class="brand" href="/">
       <span class="brand-mark">◆</span><span class="brand-word">FILM&nbsp;INDEX</span>
     </a>
@@ -88,11 +119,11 @@
     </div>
 
     <nav class="statuses">
-      <button class="stat" class:on={!statusNow()} onclick={() => navigate({ status: '' })}>All films</button>
-      <button class="stat" class:on={statusNow() === 'watchlist'} onclick={() => navigate({ status: 'watchlist' })}>
+      <button class="stat" class:on={!statusNow()} onclick={() => { navigate({ status: '' }); closeMenu(); }}>All films</button>
+      <button class="stat" class:on={statusNow() === 'watchlist'} onclick={() => { navigate({ status: 'watchlist' }); closeMenu(); }}>
         Watchlist <span>{$countsStore.watchlist}</span>
       </button>
-      <button class="stat" class:on={statusNow() === 'seen'} onclick={() => navigate({ status: 'seen' })}>
+      <button class="stat" class:on={statusNow() === 'seen'} onclick={() => { navigate({ status: 'seen' }); closeMenu(); }}>
         Seen <span>{$countsStore.seen}</span>
       </button>
     </nav>

@@ -35,8 +35,8 @@ function getDb() {
   // data; the Python sync never touches these tables.
   //   * user_status is PER USER: keyed on (cf_user, id_tspdt) so each Cloudflare
   //     Access identity has its own watchlist / seen list.
-  //   * ia_cache / film_meta are film properties (availability, poster art,
-  //     ratings), shared across users -- deliberately NOT per user.
+  //   * film_meta is a film property (poster art, ratings), shared across users
+  //     -- deliberately NOT per user.
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_status (
       cf_user    TEXT NOT NULL,
@@ -44,12 +44,6 @@ function getDb() {
       status     TEXT NOT NULL CHECK(status IN ('watchlist','seen')),
       updated_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (cf_user, id_tspdt)
-    );
-    CREATE TABLE IF NOT EXISTS ia_cache (
-      id_tspdt      INTEGER PRIMARY KEY,
-      available     INTEGER NOT NULL,
-      identifier    TEXT, watch TEXT, download TEXT, download_name TEXT,
-      checked_at    TEXT DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS film_meta (
       id_tspdt      INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
@@ -153,11 +147,9 @@ export function getFilmBasic(id) {
 export function getFilm(id, user = 'local') {
   const db = getDb();
   const row = db.prepare(
-    `SELECT f.*, us.status, ic.available AS free, ic.watch AS ia_watch,
-            ic.download AS ia_download, ic.identifier AS ia_id
+    `SELECT f.*, us.status
      FROM films f
      LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
-     LEFT JOIN ia_cache ic ON ic.id_tspdt = f.id_tspdt
      WHERE f.id_tspdt = ?`
   ).get(user, id);
   if (!row) return null;
@@ -191,21 +183,6 @@ export function counts(user = 'local') {
      FROM user_status WHERE cf_user = ?`
   ).get(user);
   return { watchlist: r.watchlist, seen: r.seen };
-}
-
-/* -------------------------------------------------- availability cache ---- */
-export function getCachedAvailability(id) {
-  return getDb().prepare('SELECT * FROM ia_cache WHERE id_tspdt = ?').get(id) || null;
-}
-export function cacheAvailability(id, a) {
-  getDb().prepare(
-    `INSERT INTO ia_cache(id_tspdt, available, identifier, watch, download, download_name, checked_at)
-     VALUES(?,?,?,?,?,?,datetime('now'))
-     ON CONFLICT(id_tspdt) DO UPDATE SET available=excluded.available, identifier=excluded.identifier,
-       watch=excluded.watch, download=excluded.download, download_name=excluded.download_name,
-       checked_at=excluded.checked_at`
-  ).run(id, a?.available ? 1 : 0, a?.identifier ?? null, a?.watch ?? null,
-        a?.download ?? null, a?.downloadName ?? null);
 }
 
 /* ------------------------------------------------- enrichment cache ------ */

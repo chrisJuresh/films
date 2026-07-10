@@ -104,4 +104,15 @@
     animation: b 1s infinite ease-in-out; }
   .loading span:nth-child(2) { animation-delay: .15s; } .loading span:nth-child(3) { animation-delay: .3s; }
   @keyframes b { 0%,80%,100% { transform: scale(.5); opacity: .4; } 40% { transform: scale(1); opacity: 1; } }
+
+  @media (max-width: 820px) {
+    /* Not sticky on mobile — the top app bar is the only pinned chrome, so the
+       two don't fight over the top edge. */
+    .results-bar { position: static; padding: 13px 16px; }
+    .rb-count { font-size: 19px; }
+    .rb-sort .ctl { font-size: 16px; }   /* 16px: no iOS focus-zoom */
+    .grid-wrap { padding: 16px 14px 56px; }
+    .grid { gap: 18px 12px; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
+    .empty { padding: 64px 0; }
+  }
 </style>
