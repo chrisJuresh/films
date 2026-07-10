@@ -1,9 +1,20 @@
 <script>
+  import { onMount } from 'svelte';
   import Poster from '$lib/components/Poster.svelte';
   import Sparkline from '$lib/components/Sparkline.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { displayTitle, gradientFor, colourLabel } from '$lib/util.js';
   import { counts, toast } from '$lib/stores.js';
+
+  let isTauri = $state(false);        // running inside the Tauri desktop app?
+  let playerInfo = $state(null);      // { os, arch, mpv } from the desktop app
+  onMount(() => {
+    const t = window.__TAURI__;
+    if (t?.core?.invoke) {
+      isTauri = true;
+      t.core.invoke('player_info').then((i) => { playerInfo = i; }).catch(() => {});
+    }
+  });
 
   let { data } = $props();
   let film = $derived(data.film);
@@ -48,30 +59,22 @@
   // Age ratings: freshest from live enrichment, else the queryable film_cert set.
   let certs = $derived((ready && meta?.certifications?.length) ? meta.certifications : (film.certs || []));
 
-  // Watch remains intentionally open-ended. A click emits the film's stable
-  // identifiers so a companion app, userscript, or media server can act on it.
-  // Two integration seams are tried in order:
-  //   1) window.filmsHandleAction(detail)   — assign a function to handle it.
-  //   2) a cancelable "films:action" CustomEvent dispatched on window; a listener
-  //      calls detail's event.preventDefault() to signal it handled the action.
-  // detail = { action: 'watch', id_tspdt, imdb_id, imdb_url, tmdb_id, title, year }.
+  // Watch: in the Tauri desktop app, open natively (mpv, else the OS default);
+  // in a plain browser, play in-browser via the iGPU stream.
   function watchFilm() {
-    const detail = {
-      action: 'watch',
-      id_tspdt: film.id_tspdt,
-      imdb_id: film.imdb_id ?? null,
-      imdb_url: film.imdb_url ?? null,
-      tmdb_id: (ready && meta?.tmdb_id) || null,
-      title: displayTitle(film.title),
-      year: film.year ?? null
-    };
-    if (typeof window.filmsHandleAction === 'function') {
-      try { window.filmsHandleAction(detail); return; } catch { /* fall through to the event */ }
+    if (!(watchInfo?.hasFile || watchInfo?.encoded)) {
+      toast('Not in the library yet — hit Download first.', 'info', 3400);
+      return;
     }
-    const handled = !window.dispatchEvent(
-      new CustomEvent('films:action', { detail, bubbles: true, cancelable: true })
-    );
-    if (!handled) toast('No “watch” handler is wired up yet.', 'info', 3200);
+    const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
+    if (t?.core?.invoke) {
+      const url = new URL(`/api/stream/${film.id_tspdt}`, window.location.origin).href;
+      t.core.invoke('open_in_player', { url, title: displayTitle(film.title) })
+        .then((used) => toast(`Opening in ${used || 'your player'}…`, 'ok'))
+        .catch((e) => toast('Could not open the player: ' + e, 'error', 4600));
+      return;
+    }
+    openPlayer();
   }
   async function downloadFilm() {
     if (downloadState !== 'idle') return;
@@ -237,7 +240,7 @@
       </div>
 
       <div class="cta">
-        <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> Watch</button>
+        <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
         <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadIcon} size={16} /> {downloadLabel}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
@@ -286,10 +289,8 @@
 
       {#if watchInfo && (watchInfo.hasFile || watchInfo.encoded)}
         <div class="play">
-          {#if watchInfo.browser}
-            <button class="btn primary" onclick={openPlayer} disabled={playing}><Icon name="play" size={16} /> Watch in browser</button>
-          {:else if watchInfo.hasFile}
-            <button class="btn primary" onclick={openPlayer} disabled={playing}><Icon name="play" size={16} /> Stream (iGPU)</button>
+          {#if !watchInfo.browser && !isTauri}
+            <button class="btn" onclick={openPlayer} disabled={playing}><Icon name="play" size={16} /> Stream (iGPU transcode)</button>
           {/if}
           {#if watchInfo.encode?.state === 'running'}
             <div class="enc"><span>Encoding · {watchInfo.encode.percent}%</span><div class="rr-bar"><span style="width:{watchInfo.encode.percent}%"></span></div></div>
@@ -299,6 +300,7 @@
             <button class="btn" onclick={startEncode}><Icon name="download" size={16} /> Encode &amp; download (iGPU)</button>
           {/if}
         </div>
+        {#if isTauri && playerInfo}<div class="rr-meta">Desktop · {playerInfo.os}{playerInfo.mpv ? ' · mpv ready' : ' · using system default player'}</div>{/if}
         {#if watchInfo.encode?.state === 'error'}<div class="rr-err">Encode failed — {watchInfo.encode.error}</div>{/if}
       {/if}
     </div>
