@@ -97,6 +97,16 @@
       toast(cause?.message || 'Could not connect to Radarr.', 'error', 4800);
     }
   }
+  async function cancelDownload() {
+    try {
+      const r = await fetch(`/api/radarr/${film.id_tspdt}`, { method: 'DELETE' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.message || 'Could not cancel.');
+      toast(d.removed ? 'Download cancelled.' : 'Nothing to cancel.', 'ok');
+      downloadState = 'idle';
+      loadRadarr(film.id_tspdt);
+    } catch (e) { toast(e.message || 'Could not cancel the download.', 'error', 4200); }
+  }
   async function setKind(kind, on) {
     try {
       const r = await fetch('/api/status', {
@@ -250,6 +260,7 @@
             </div>
             {#if radarr.queue.error}<div class="rr-err">{radarr.queue.error}</div>{/if}
             {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">{[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
+            <button class="rr-cancel" onclick={cancelDownload}>Cancel download</button>
           {:else if radarr.queue}
             <div class="rr-row">
               <span class="rr-label">{radarr.queue.state === 'importPending' || radarr.queue.state === 'importing' ? 'Importing' : 'Downloading'}{radarr.queue.quality ? ' · ' + radarr.queue.quality : ''}</span>
@@ -257,6 +268,7 @@
             </div>
             <div class="rr-bar" class:indef={radarr.queue.progress == null}><span style="width:{radarr.queue.progress ?? 100}%"></span></div>
             {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">via {[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
+            <button class="rr-cancel" onclick={cancelDownload}>Cancel download</button>
           {:else if radarr.hasFile}
             <div class="rr-row">
               <span class="rr-label ok"><Icon name="check" size={14} stroke={2.3} /> In your library</span>
@@ -408,6 +420,9 @@
   .rr-err { margin-top: 8px; font-size: 12px; color: #e5675c; }
   .rr-label.err { color: #e5675c; }
   .rr-meta { margin-top: 7px; font-size: 11.5px; color: var(--faint); }
+  .rr-cancel { margin-top: 9px; padding: 5px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; font-family: inherit; }
+  .rr-cancel:hover { color: #e5675c; border-color: color-mix(in srgb, #e5675c 45%, var(--border)); }
 
   .pbwrap { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
   .pb { flex: 1; height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; max-width: 320px; }

@@ -93,6 +93,7 @@ test('repoints an already-added movie to the catalogue year, then searches', asy
   const mock = mockFetch(
     jsonResponse(lookup),
     jsonResponse([{ id: 7, title: 'Alien', year: 1979, hasFile: false }]),
+    jsonResponse({ id: 7, title: 'Alien', year: 1979 }),                        // full movie GET
     jsonResponse({ id: 7, title: 'Alien', year: 1975, secondaryYear: 1979 }),   // PUT
     jsonResponse({ id: 91, name: 'MoviesSearch' })                              // command
   );
@@ -100,12 +101,12 @@ test('repoints an already-added movie to the catalogue year, then searches', asy
   const result = await downloadWithRadarrClient('tt0078748', settings(), mock.fetch, { year: '1975' });
 
   assert.equal(result.alreadyAdded, true);
-  assert.equal(mock.calls[2].options.method, 'PUT');
-  assert.equal(mock.calls[2].url.pathname, '/radarr/api/v3/movie/7');
-  const put = JSON.parse(mock.calls[2].options.body);
+  assert.equal(mock.calls[2].url.pathname, '/radarr/api/v3/movie/7');           // full movie fetch
+  assert.equal(mock.calls[3].options.method, 'PUT');                            // then PUT with our year
+  const put = JSON.parse(mock.calls[3].options.body);
   assert.equal(put.year, 1975);
   assert.equal(put.secondaryYear, 1979);
-  assert.equal(mock.calls[3].url.pathname, '/radarr/api/v3/command');
+  assert.equal(mock.calls[4].url.pathname, '/radarr/api/v3/command');           // then search
 });
 
 test('searches an existing movie that has no file', async () => {

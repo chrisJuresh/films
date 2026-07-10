@@ -53,8 +53,8 @@ async function requestRadarr(settings, path, options = {}, fetchImpl = globalThi
     }
     throw new RadarrError(`Radarr returned HTTP ${response.status}.`, 502);
   }
-  if (malformed || body === null) throw new RadarrError('Radarr returned an invalid response.', 502);
-  return body;
+  if (malformed) throw new RadarrError('Radarr returned an invalid response.', 502);
+  return body ?? {};                          // empty body (e.g. DELETE) is fine
 }
 
 /**
@@ -94,13 +94,14 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   }
 
   if (movie?.id) {
-    // Point an already-added movie's search at our year (best-effort — a
-    // failure here must not block the search).
+    // Point an already-added movie's search at our year. Radarr searches
+    // indexers with the movie's primary year, so this must land BEFORE the
+    // search. Use the full movie resource (the list form can be rejected by
+    // PUT) and only proceed to search once it's applied.
     if (useAlt && movie.year !== catYear) {
-      try {
-        await requestRadarr(settings, `movie/${movie.id}`,
-          { method: 'PUT', body: { ...movie, year: catYear, secondaryYear: tmdbYear } }, fetchImpl);
-      } catch { /* non-fatal */ }
+      const full = await requestRadarr(settings, `movie/${movie.id}`, {}, fetchImpl);
+      await requestRadarr(settings, `movie/${movie.id}`,
+        { method: 'PUT', body: { ...full, year: catYear, secondaryYear: tmdbYear } }, fetchImpl);
     }
     await requestRadarr(settings, 'command', {
       method: 'POST',
@@ -123,6 +124,49 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   }, fetchImpl);
 
   return { status: 'queued', title: added?.title || lookup.title, radarrId: added?.id, alreadyAdded: false };
+}
+
+/** Cancel any in-progress download for a film (removes it from Radarr's queue
+ *  and the download client). For "I changed my mind after clicking Download." */
+export async function cancelDownload(imdbId, settings, fetchImpl = globalThis.fetch) {
+  if (!/^tt\d{7,10}$/i.test(imdbId || '')) return { removed: 0 };
+  const lookup = await requestRadarr(settings, `movie/lookup/imdb?imdbId=${encodeURIComponent(imdbId)}`, {}, fetchImpl);
+  if (!lookup?.tmdbId) return { removed: 0 };
+  const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
+  const movie = Array.isArray(existing) ? existing[0] : null;
+  if (!movie?.id) return { removed: 0 };
+  const q = await requestRadarr(settings, `queue/details?movieIds=${movie.id}`, {}, fetchImpl);
+  const items = Array.isArray(q) ? q.filter((x) => x.movieId === movie.id) : [];
+  let removed = 0;
+  for (const it of items) {
+    await requestRadarr(settings, `queue/${it.id}?removeFromClient=true&blocklist=false`, { method: 'DELETE' }, fetchImpl);
+    removed++;
+  }
+  return { removed };
+}
+
+/** Bulk map of imdbId -> download state across the whole Radarr library, for
+ *  the sidebar filter. 'downloaded' | 'downloading' | 'error'. */
+export async function libraryState(settings, fetchImpl = globalThis.fetch) {
+  const movies = await requestRadarr(settings, 'movie', {}, fetchImpl);
+  const list = Array.isArray(movies) ? movies : [];
+  const byId = new Map();
+  const state = new Map();
+  for (const m of list) {
+    byId.set(m.id, m);
+    if (m.imdbId && m.hasFile) state.set(m.imdbId, 'downloaded');
+  }
+  try {
+    const q = await requestRadarr(settings, 'queue/details', {}, fetchImpl);
+    for (const it of (Array.isArray(q) ? q : [])) {
+      const m = byId.get(it.movieId);
+      if (!m?.imdbId) continue;
+      const errored = it.trackedDownloadStatus === 'error' || it.trackedDownloadStatus === 'warning';
+      if (errored) state.set(m.imdbId, 'error');
+      else if (state.get(m.imdbId) !== 'downloaded') state.set(m.imdbId, 'downloading');
+    }
+  } catch { /* queue optional */ }
+  return state;
 }
 
 /** Server-side only: the film's actual file path + codecs (for transcoding).
