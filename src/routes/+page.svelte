@@ -44,9 +44,11 @@
     } finally { loading = false; }
   }
 
-  function onStatus(id, status) {
+  function onStatus(id, st) {
     const active = data.filters?.status;
-    if (active && status !== active) { items = items.filter((x) => x.id_tspdt !== id); total = Math.max(0, total - 1); }
+    if (!active) return;
+    const stillMatches = active === 'watchlist' ? st.watchlist : st.seen;
+    if (!stillMatches) { items = items.filter((x) => x.id_tspdt !== id); total = Math.max(0, total - 1); }
   }
 
   onMount(() => {

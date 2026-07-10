@@ -6,7 +6,7 @@
 //              budget/revenue, genres, production companies
 // Results are merged into one object and cached in film_meta.
 import { env } from '$env/dynamic/private';
-import { getMetaCache, setMetaCache } from './db.js';
+import { getMetaCache, setMetaCache, setFilmCerts } from './db.js';
 
 const IMG = 'https://image.tmdb.org/t/p/';
 const TTL_MS = 30 * 24 * 3600 * 1000;
@@ -77,9 +77,19 @@ export async function getMeta(film, level = 'full') {
           const vids = d.videos?.results || [];
           const tr = vids.find((v) => v.site === 'YouTube' && v.type === 'Trailer') || vids.find((v) => v.site === 'YouTube');
           if (tr) m.trailer = 'https://www.youtube.com/watch?v=' + tr.key;
-          const us = (d.release_dates?.results || []).find((r) => r.iso_3166_1 === 'US');
-          const cert = us?.release_dates?.map((x) => x.certification).find(Boolean);
-          if (cert) m.certification = cert;
+          // Collect EVERY certification across all countries (mixed systems is
+          // fine); film_cert makes them queryable for the front-page filter.
+          const seenCert = new Set();
+          const certifications = [];
+          for (const c of (d.release_dates?.results || [])) {
+            for (const rd of (c.release_dates || [])) {
+              const v = (rd.certification || '').trim();
+              const k = c.iso_3166_1 + '|' + v;
+              if (v && !seenCert.has(k)) { seenCert.add(k); certifications.push({ country: c.iso_3166_1, cert: v }); }
+            }
+          }
+          m.certifications = certifications;
+          m.certification = certifications.find((x) => x.country === 'US')?.cert || certifications[0]?.cert || m.certification || null;
         }
       }
     }
@@ -100,7 +110,12 @@ export async function getMeta(film, level = 'full') {
       m.overview = m.overview || na(o.Plot);
       m.awards = na(o.Awards);
       m.box_office = na(o.BoxOffice);
-      m.certification = m.certification || na(o.Rated);
+      const rated = na(o.Rated);
+      if (rated) {
+        m.certification = m.certification || rated;
+        m.certifications = m.certifications || [];
+        if (!m.certifications.some((x) => x.country === 'US' && x.cert === rated)) m.certifications.push({ country: 'US', cert: rated });
+      }
       m.language = na(o.Language);
       m.country = na(o.Country);
       m.released = na(o.Released);
@@ -116,6 +131,9 @@ export async function getMeta(film, level = 'full') {
 
   // Only cache when a provider actually returned data, so a transient failure
   // (bad key, quota, network) doesn't freeze an empty result for 30 days.
-  if (got) setMetaCache(film.id_tspdt, m, level === 'full' ? 'full' : (cached?.level || 'light'));
+  if (got) {
+    setMetaCache(film.id_tspdt, m, level === 'full' ? 'full' : (cached?.level || 'light'));
+    if (level === 'full') setFilmCerts(film.id_tspdt, m.certifications || []);
+  }
   return m;
 }

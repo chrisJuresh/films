@@ -7,13 +7,14 @@
   let { data } = $props();
   let film = $derived(data.film);
 
-  let status = $state(data.film.status ?? null);
+  let status = $state(data.film.status ?? null);      // site status: watchlist | seen | null
+  let lbState = $state(data.film.lb_state ?? null);   // letterboxd: watched | unwatched | null
   let meta = $state(null);    // IMDb/TMDB enrichment
 
   let loadedId;
   $effect(() => {
     const id = film.id_tspdt;
-    status = film.status ?? null;
+    status = film.status ?? null; lbState = film.lb_state ?? null;
     if (loadedId === id) return;
     loadedId = id; meta = null;
     fetch(`/api/meta/${id}`).then((r) => r.json())
@@ -21,6 +22,11 @@
   });
 
   let ready = $derived(meta && meta.enabled !== false);
+  let watchlisted = $derived(status === 'watchlist');
+  let lbWatched = $derived(lbState === 'watched');
+  let seen = $derived(status === 'seen' || lbWatched);
+  // Age ratings: freshest from live enrichment, else the queryable film_cert set.
+  let certs = $derived((ready && meta?.certifications?.length) ? meta.certifications : (film.certs || []));
 
   // Watch / Download are intentionally open-ended: this app does NOT decide what
   // they do. A click emits the film's stable identifiers so anything else can act
@@ -48,18 +54,24 @@
     );
     if (!handled) toast(`No “${action}” handler is wired up yet.`, 'info', 3200);
   }
-  async function setStatus(next) {
-    const want = status === next ? null : next;
+  async function setKind(kind, on) {
     try {
       const r = await fetch('/api/status', {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ id_tspdt: film.id_tspdt, status: want })
+        body: JSON.stringify({ id_tspdt: film.id_tspdt, kind, on })
       });
       if (!r.ok) throw new Error();
       const d = await r.json();
-      status = d.status;
+      status = d.status; lbState = d.lb_state;
       if (d.counts) counts.set(d.counts);
     } catch { toast('Could not update your list.', 'error'); }
+  }
+  function toggleWatchlist() { setKind('watchlist', !watchlisted); }
+  function toggleSeen() {
+    if (!seen) { setKind('seen', true); return; }
+    // Un-ticking a Letterboxd-imported watch warns first (kept as a record).
+    if (lbWatched && !confirm(`“${displayTitle(film.title)}” is marked watched from your Letterboxd import.\n\nUn-tick it here? It stays recorded on the Letterboxd page.`)) return;
+    setKind('seen', false);
   }
 
   const money = (n) => (n ? '$' + Number(n).toLocaleString() : null);
@@ -100,8 +112,8 @@
         <span class="chip rank">#{film.latest_rank} · TSPDT</span>
         {#each genres as g}<span class="chip">{g}</span>{/each}
         {#if runtime}<span class="chip">{runtime} min</span>{/if}
-        {#if ready && meta.certification}<span class="chip">{meta.certification}</span>{/if}
         {#if film.colour && film.colour !== '---'}<span class="chip">{colourLabel(film.colour)}</span>{/if}
+        {#each certs as c}<span class="chip cert" title="Age rating · {c.country}">{c.country} {c.cert}</span>{/each}
       </div>
 
       <div class="cta">
@@ -111,8 +123,8 @@
       </div>
 
       <div class="actions">
-        <button class="ghost" class:on={status === 'watchlist'} onclick={() => setStatus('watchlist')}>{status === 'watchlist' ? '♥ On watchlist' : '♥ Watchlist'}</button>
-        <button class="ghost seen" class:on={status === 'seen'} onclick={() => setStatus('seen')}>{status === 'seen' ? '✓ Seen' : '✓ Mark seen'}</button>
+        <button class="ghost" class:on={watchlisted} onclick={toggleWatchlist}>{watchlisted ? '♥ On watchlist' : '♥ Watchlist'}</button>
+        <button class="ghost seen" class:on={seen} class:lb={lbWatched} onclick={toggleSeen}>{seen ? (lbWatched ? '✓ Seen · Letterboxd' : '✓ Seen') : '✓ Mark seen'}</button>
       </div>
     </div>
   </div>
@@ -189,6 +201,7 @@
   .chip { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface-2); color: var(--muted); }
   .chip.rank { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+  .chip.cert { border-color: var(--border-strong); color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
 
   .cta { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn { padding: 13px 22px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2);
@@ -205,6 +218,7 @@
   .ghost:hover { border-color: var(--border-strong); }
   .ghost.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .ghost.seen.on { background: var(--free); color: #06210b; border-color: var(--free); }
+  .ghost.seen.on.lb { background: var(--lb); color: var(--lb-ink); border-color: var(--lb); }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }

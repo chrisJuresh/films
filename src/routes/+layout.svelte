@@ -73,10 +73,12 @@
   }
 
   let activeCount = $derived(
-    ['q', 'decade', 'genre', 'country', 'colour', 'new'].reduce(
+    ['q', 'decade', 'genre', 'country', 'colour', 'cert', 'new'].reduce(
       (n, k) => n + (($page.url.searchParams.get(k) || '') ? 1 : 0), 0)
   );
-  function clearAll() { navigate({ q: '', decade: '', genre: '', country: '', colour: '', new: '' }); }
+  function clearAll() { navigate({ q: '', decade: '', genre: '', country: '', colour: '', cert: '', new: '' }); }
+
+  let userEmail = $derived(data?.user || null);
 
   function toggleTheme() {
     themeName = themeName === 'light' ? 'dark' : 'light';
@@ -177,6 +179,17 @@
         </div>
       </section>
 
+      {#if data.facets.certifications?.length}
+      <section>
+        <h4>Age rating</h4>
+        <div class="chips">
+          {#each data.facets.certifications as c}
+            <button class="chip" class:on={isSel('cert', c.value)} onclick={() => toggle('cert', c.value)} title="{c.count.toLocaleString()} films">{c.value}</button>
+          {/each}
+        </div>
+      </section>
+      {/if}
+
       <section>
         <button class="new-toggle" class:on={isSel('new', '1')} onclick={() => navigate({ new: isSel('new', '1') ? '' : '1' })}>
           ✦ New in {data.facets.latestEdition} edition
@@ -184,9 +197,21 @@
       </section>
     </div>
 
-    <button class="theme" onclick={toggleTheme} title="Toggle theme">
-      {themeName === 'light' ? '☀ Light' : '☾ Dark'}
-    </button>
+    <a class="side-link" href="/letterboxd" onclick={closeMenu}>
+      <span class="sl-ic">⬍</span> Letterboxd import &amp; sync
+    </a>
+
+    <div class="side-foot">
+      {#if userEmail}
+        <div class="whoami" title={userEmail}>
+          <svg viewBox="0 0 24 24" class="wa-ic" aria-hidden="true"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zM4 20a8 8 0 0116 0"/></svg>
+          <span>{userEmail}</span>
+        </div>
+      {/if}
+      <button class="theme" onclick={toggleTheme} title="Toggle theme">
+        {themeName === 'light' ? '☀ Light' : '☾ Dark'}
+      </button>
+    </div>
   </aside>
   {/if}
 

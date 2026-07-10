@@ -3,6 +3,11 @@
 .env.*
 !.env.example
 
+# --- personal data (never commit — this repo is public) ---
+letterboxd-*.zip
+watched.csv
+/*.csv
+
 # --- node / SvelteKit (web app at repo root) ---
 node_modules/
 /.svelte-kit/

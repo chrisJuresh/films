@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { displayTitle } from '../util.js';
 
 // Find tspdt.db whether launched from the repo root or elsewhere (dev/build/preview differ).
 const here = dirname(fileURLToPath(import.meta.url));
@@ -31,12 +32,17 @@ function getDb() {
   }
   const db = new DatabaseSync(DB_PATH);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 4000;');
-  // Personal state + availability/metadata caches -- added alongside the synced
-  // data; the Python sync never touches these tables.
-  //   * user_status is PER USER: keyed on (cf_user, id_tspdt) so each Cloudflare
-  //     Access identity has its own watchlist / seen list.
-  //   * film_meta is a film property (poster art, ratings), shared across users
-  //     -- deliberately NOT per user.
+  // Personal state + metadata caches -- added alongside the synced data; the
+  // Python sync never touches these tables.
+  //   * user_status is PER USER: the film's status ON THIS SITE (watchlist XOR
+  //     seen), keyed on (cf_user, id_tspdt) per Cloudflare Access identity.
+  //   * lb_seen is the SEPARATE Letterboxd "watched" tracker, PER USER. state is
+  //     'watched' (imported) or 'unwatched' (was imported, then un-ticked here --
+  //     we keep the row as a record). A film counts as seen if it's site-seen OR
+  //     lb_seen='watched'. Import only ever ADDS; it never flips a row back.
+  //   * film_cert is a film property (age ratings, all countries), shared across
+  //     users -- queryable so the catalogue can be filtered by rating.
+  //   * film_meta is a film property (poster art, ratings), shared across users.
   db.exec(`
     CREATE TABLE IF NOT EXISTS user_status (
       cf_user    TEXT NOT NULL,
@@ -45,6 +51,22 @@ function getDb() {
       updated_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (cf_user, id_tspdt)
     );
+    CREATE TABLE IF NOT EXISTS lb_seen (
+      cf_user     TEXT NOT NULL,
+      id_tspdt    INTEGER NOT NULL REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      state       TEXT NOT NULL CHECK(state IN ('watched','unwatched')),
+      lb_date     TEXT,
+      imported_at TEXT DEFAULT (datetime('now')),
+      updated_at  TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (cf_user, id_tspdt)
+    );
+    CREATE TABLE IF NOT EXISTS film_cert (
+      id_tspdt   INTEGER NOT NULL REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      country    TEXT NOT NULL,
+      cert       TEXT NOT NULL,
+      PRIMARY KEY (id_tspdt, country, cert)
+    );
+    CREATE INDEX IF NOT EXISTS film_cert_cert ON film_cert(cert);
     CREATE TABLE IF NOT EXISTS film_meta (
       id_tspdt      INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
       level         TEXT,
@@ -76,6 +98,14 @@ export function getFacets() {
     .slice(0, n).map(([value, count]) => ({ value, count }));
   const total = db.prepare('SELECT count(*) c FROM films WHERE removed_at IS NULL AND latest_rank IS NOT NULL').get().c;
   const latest = db.prepare('SELECT label, poll_year FROM editions ORDER BY poll_date DESC, edition_id DESC LIMIT 1').get();
+  // Age ratings: distinct certifications across all countries (film_cert is
+  // backfilled + kept fresh on enrichment). Mixed systems (R / 15 / 18 / U …).
+  const certifications = db.prepare(
+    `SELECT fc.cert AS value, count(DISTINCT fc.id_tspdt) AS count
+     FROM film_cert fc JOIN films f USING(id_tspdt)
+     WHERE f.removed_at IS NULL AND f.latest_rank IS NOT NULL
+     GROUP BY fc.cert ORDER BY count DESC, value LIMIT 80`
+  ).all();
   _facets = {
     total,
     latestEdition: latest?.label ?? null,
@@ -83,7 +113,8 @@ export function getFacets() {
     countries: top(countries, 80),
     genres: top(genres, 60),
     colours: top(colours, 6),
-    decades: [...decades.entries()].sort((a, b) => a[0] - b[0]).map(([value, count]) => ({ value, count }))
+    decades: [...decades.entries()].sort((a, b) => a[0] - b[0]).map(([value, count]) => ({ value, count })),
+    certifications
   };
   return _facets;
 }
@@ -115,10 +146,20 @@ export function queryFilms(p = {}) {
   const colours = multi(p.colour);
   if (colours.length) { where.push('f.colour IN (' + colours.map(() => '?').join(',') + ')'); colours.forEach((c) => args.push(c)); }
   if (p.new === '1' || p.new === true) where.push('f.is_new = 1');
+  const certs = multi(p.cert);   // age-rating filter: film matches if it has ANY selected cert
+  if (certs.length) {
+    where.push('EXISTS (SELECT 1 FROM film_cert fc WHERE fc.id_tspdt = f.id_tspdt AND fc.cert IN ('
+      + certs.map(() => '?').join(',') + '))');
+    certs.forEach((c) => args.push(c));
+  }
 
-  // Per-user join: the status column (and the status filter) reflect THIS user.
-  const join = 'LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?';
-  if (p.status === 'watchlist' || p.status === 'seen') { where.push('us.status = ?'); args.push(p.status); }
+  // Per-user joins: site status (us) + Letterboxd watched state (lb) for THIS user.
+  const joins = `LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
+     LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?`;
+  const joinArgs = [user, user];
+  // "seen" spans both trackers; "watchlist" is site-only.
+  if (p.status === 'watchlist') where.push("us.status = 'watchlist'");
+  else if (p.status === 'seen') where.push("(us.status = 'seen' OR lb.state = 'watched')");
 
   const sort = Object.hasOwn(SORTS, p.sort) ? SORTS[p.sort] : SORTS.rank;  // no prototype read-through
   const order = p.order === 'desc' ? 'DESC' : 'ASC';
@@ -126,15 +167,16 @@ export function queryFilms(p = {}) {
   const offset = Math.max(0, Math.trunc(+p.offset || 0));
   const wc = where.join(' AND ');
 
-  // The join's `?` (user) binds before the WHERE args; LIMIT/OFFSET bind last.
-  const total = db.prepare(`SELECT count(*) c FROM films f ${join} WHERE ${wc}`).get(user, ...args).c;
+  // The joins' `?` (user, user) bind before the WHERE args; LIMIT/OFFSET bind last.
+  const total = db.prepare(`SELECT count(*) c FROM films f ${joins} WHERE ${wc}`).get(...joinArgs, ...args).c;
   const items = db.prepare(
     `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, f.country,
-            f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.is_new, us.status
-     FROM films f ${join} WHERE ${wc}
+            f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.is_new,
+            us.status, lb.state AS lb_state
+     FROM films f ${joins} WHERE ${wc}
      ORDER BY ${sort} ${order}, f.latest_rank ASC
      LIMIT ? OFFSET ?`
-  ).all(user, ...args, limit, offset);
+  ).all(...joinArgs, ...args, limit, offset);
   return { total, items };
 }
 
@@ -147,11 +189,12 @@ export function getFilmBasic(id) {
 export function getFilm(id, user = 'local') {
   const db = getDb();
   const row = db.prepare(
-    `SELECT f.*, us.status
+    `SELECT f.*, us.status, lb.state AS lb_state
      FROM films f
      LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
+     LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
      WHERE f.id_tspdt = ?`
-  ).get(user, id);
+  ).get(user, user, id);
   if (!row) return null;
   delete row.content_hash;
   row.history = db.prepare(
@@ -159,30 +202,66 @@ export function getFilm(id, user = 'local') {
      JOIN editions e USING(edition_id) WHERE r.id_tspdt = ?
      ORDER BY e.poll_date ASC, e.edition_id ASC`
   ).all(id);
+  row.certs = db.prepare('SELECT country, cert FROM film_cert WHERE id_tspdt = ? ORDER BY country, cert').all(id);
   return row;
 }
 
 /* -------------------------------------------------------------- status ---- */
-export function setStatus(user, id, status) {
+// Site status is a single value per film (watchlist XOR seen). Letterboxd
+// "watched" is tracked SEPARATELY in lb_seen, so a film is SEEN if it's
+// site-seen OR lb_seen='watched'.
+function statusFor(db, user, id) {
+  const site = db.prepare('SELECT status FROM user_status WHERE cf_user=? AND id_tspdt=?').get(user, id)?.status ?? null;
+  const lb_state = db.prepare('SELECT state FROM lb_seen WHERE cf_user=? AND id_tspdt=?').get(user, id)?.state ?? null;
+  return {
+    status: site, lb_state,
+    watchlist: site === 'watchlist',
+    site_seen: site === 'seen',
+    lb_watched: lb_state === 'watched',
+    seen: site === 'seen' || lb_state === 'watched',
+    counts: counts(user)
+  };
+}
+
+// kind = 'watchlist' | 'seen', on = boolean.
+export function setStatus(user, id, kind, on) {
   const db = getDb();
-  if (status === 'watchlist' || status === 'seen') {
-    db.prepare(
-      `INSERT INTO user_status(cf_user, id_tspdt, status, updated_at) VALUES(?,?,?,datetime('now'))
-       ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at`
-    ).run(user, id, status);
-  } else {
-    db.prepare('DELETE FROM user_status WHERE cf_user = ? AND id_tspdt = ?').run(user, id);
-    status = null;
+  if (kind === 'watchlist') {
+    if (on) {
+      db.prepare(
+        `INSERT INTO user_status(cf_user, id_tspdt, status, updated_at) VALUES(?,?,'watchlist',datetime('now'))
+         ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET status='watchlist', updated_at=datetime('now')`
+      ).run(user, id);
+    } else {
+      db.prepare("DELETE FROM user_status WHERE cf_user=? AND id_tspdt=? AND status='watchlist'").run(user, id);
+    }
+  } else if (kind === 'seen') {
+    if (on) {
+      db.prepare(
+        `INSERT INTO user_status(cf_user, id_tspdt, status, updated_at) VALUES(?,?,'seen',datetime('now'))
+         ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET status='seen', updated_at=datetime('now')`
+      ).run(user, id);
+    } else {
+      // Unwatch: clear site-seen; if it came from Letterboxd, keep the row but
+      // mark it 'unwatched' (a record it was imported then removed here).
+      db.prepare("DELETE FROM user_status WHERE cf_user=? AND id_tspdt=? AND status='seen'").run(user, id);
+      db.prepare("UPDATE lb_seen SET state='unwatched', updated_at=datetime('now') WHERE cf_user=? AND id_tspdt=? AND state='watched'").run(user, id);
+    }
   }
-  return { status, counts: counts(user) };
+  return statusFor(db, user, id);
 }
 
 export function counts(user = 'local') {
-  const r = getDb().prepare(
-    `SELECT COALESCE(SUM(status='watchlist'),0) watchlist, COALESCE(SUM(status='seen'),0) seen
-     FROM user_status WHERE cf_user = ?`
-  ).get(user);
-  return { watchlist: r.watchlist, seen: r.seen };
+  const db = getDb();
+  const watchlist = db.prepare("SELECT count(*) c FROM user_status WHERE cf_user=? AND status='watchlist'").get(user).c;
+  const seen = db.prepare(
+    `SELECT count(*) c FROM (
+       SELECT id_tspdt FROM user_status WHERE cf_user=? AND status='seen'
+       UNION
+       SELECT id_tspdt FROM lb_seen WHERE cf_user=? AND state='watched'
+     )`
+  ).get(user, user).c;
+  return { watchlist, seen };
 }
 
 /* ------------------------------------------------- enrichment cache ------ */
@@ -194,4 +273,92 @@ export function setMetaCache(id, obj, level) {
     `INSERT INTO film_meta(id_tspdt, level, json, fetched_at) VALUES(?,?,?,datetime('now'))
      ON CONFLICT(id_tspdt) DO UPDATE SET level=excluded.level, json=excluded.json, fetched_at=excluded.fetched_at`
   ).run(id, level, JSON.stringify(obj));
+}
+
+/* ------------------------------------------------- age-rating certs ------ */
+// Replace all stored certifications for a film. certs = [{ country, cert }].
+export function setFilmCerts(id, certs) {
+  const db = getDb();
+  db.prepare('DELETE FROM film_cert WHERE id_tspdt = ?').run(id);
+  const ins = db.prepare('INSERT OR IGNORE INTO film_cert(id_tspdt, country, cert) VALUES(?,?,?)');
+  for (const c of certs || []) {
+    const cert = String(c?.cert ?? '').trim();
+    if (cert) ins.run(id, String(c.country ?? '').trim(), cert);
+  }
+}
+
+/* --------------------------------------------------- letterboxd import --- */
+// Match a letterboxd title to a catalogue film. Letterboxd stores natural order
+// ("The Rules of the Game"); TSPDT stores article-suffix ("Rules of the Game,
+// The"). displayTitle() normalises TSPDT into natural order, so canonicalising
+// both to lowercase alphanumerics lets them meet in the middle.
+const canon = (t) => displayTitle(t).toLowerCase().normalize('NFKD')
+  .replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '');
+
+let _titleIndex = null;
+function titleIndex(db) {
+  if (_titleIndex) return _titleIndex;
+  const m = new Map();
+  for (const r of db.prepare("SELECT id_tspdt, title, year FROM films WHERE removed_at IS NULL AND latest_rank IS NOT NULL").all()) {
+    const k = canon(r.title);
+    if (!k) continue;
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push({ id: r.id_tspdt, year: parseInt(r.year, 10) });
+  }
+  _titleIndex = m;
+  return m;
+}
+function matchFilm(idx, name, year) {
+  const cands = idx.get(canon(name));
+  if (!cands || !cands.length) return null;
+  const y = parseInt(year, 10);
+  if (Number.isNaN(y)) return cands[0].id;
+  const hit = cands.find((c) => c.year === y) || cands.find((c) => Math.abs(c.year - y) <= 1) || (cands.length === 1 ? cands[0] : null);
+  return hit?.id ?? null;
+}
+
+// rows = [{ date, name, year }] parsed from a letterboxd watched.csv.
+// Only ever ADDS: an existing lb_seen row (watched OR unwatched) is left as-is,
+// so a manual un-tick is never resurrected by a re-import.
+export function importLetterboxd(user, rows) {
+  const db = getDb();
+  const idx = titleIndex(db);
+  const has = db.prepare('SELECT state FROM lb_seen WHERE cf_user=? AND id_tspdt=?');
+  const ins = db.prepare(
+    `INSERT INTO lb_seen(cf_user, id_tspdt, state, lb_date, imported_at, updated_at)
+     VALUES(?,?,'watched',?,datetime('now'),datetime('now'))`
+  );
+  let matched = 0, added = 0, already = 0; const unmatched = [];
+  db.exec('BEGIN');
+  try {
+    for (const r of rows) {
+      const id = matchFilm(idx, r.name, r.year);
+      if (!id) { unmatched.push({ name: r.name, year: r.year }); continue; }
+      matched++;
+      if (has.get(user, id)) { already++; continue; }
+      ins.run(user, id, r.date || null);
+      added++;
+    }
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  return { total: rows.length, matched, added, already, unmatched, counts: counts(user) };
+}
+
+// The two lists shown on the /letterboxd reconciliation page.
+export function reconciliation(user) {
+  const db = getDb();
+  const onlySite = db.prepare(
+    `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director
+     FROM user_status us JOIN films f USING(id_tspdt)
+     LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
+     WHERE us.cf_user = ? AND us.status = 'seen' AND lb.id_tspdt IS NULL
+     ORDER BY f.latest_rank`
+  ).all(user, user);
+  const lbRemoved = db.prepare(
+    `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, lb.lb_date
+     FROM lb_seen lb JOIN films f USING(id_tspdt)
+     WHERE lb.cf_user = ? AND lb.state = 'unwatched'
+     ORDER BY f.latest_rank`
+  ).all(user);
+  return { onlySite, lbRemoved };
 }
