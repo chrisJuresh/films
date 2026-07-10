@@ -13,9 +13,11 @@ import { resolve } from 'node:path';
 
 const argv = process.argv.slice(2);
 const FORCE = argv.includes('--force');
-const LIMIT = parseInt(argv.find((a) => /^\d+$/.test(a)) || process.env.CERT_BACKFILL_LIMIT || '2000', 10);
+// No numeric arg => ALL ranked films (in rank order). Pass a number to cap it.
+const LIMIT = parseInt(argv.find((a) => /^\d+$/.test(a)) || process.env.CERT_BACKFILL_LIMIT || '0', 10);
+const SQL_LIMIT = LIMIT > 0 ? LIMIT : -1;   // SQLite: LIMIT -1 = no limit
 const KEY = process.env.TSPDT_TMDB_KEY;
-if (!KEY) { console.error('TSPDT_TMDB_KEY is required.'); process.exit(1); }
+if (!KEY) { console.error('TSPDT_TMDB_KEY not set — skipping certification backfill.'); process.exit(0); }
 
 const DB_PATH = [process.env.TSPDT_DB, resolve(process.cwd(), 'tspdt.db'), '/srv/films/tspdt.db']
   .filter(Boolean).find((p) => existsSync(p));
@@ -32,7 +34,7 @@ const films = db.prepare(
   `SELECT id_tspdt, imdb_id FROM films
    WHERE removed_at IS NULL AND latest_rank IS NOT NULL AND imdb_id IS NOT NULL AND imdb_id <> ''
    ORDER BY latest_rank ASC LIMIT ?`
-).all(LIMIT);
+).all(SQL_LIMIT);
 
 const hasCerts = db.prepare('SELECT 1 FROM film_cert WHERE id_tspdt = ? LIMIT 1');
 const del = db.prepare('DELETE FROM film_cert WHERE id_tspdt = ?');

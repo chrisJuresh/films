@@ -54,8 +54,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
 import urllib.request
@@ -644,6 +646,26 @@ def report(conn: sqlite3.Connection, stats: dict, n_examples: int) -> None:
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
+def run_cert_backfill(db_path: Path) -> None:
+    """After a sync, top up age-rating certifications for any films that don't
+    have them yet -- so films newly imported from the Starting List get their
+    ratings without anyone remembering to run a separate step. Best-effort: it
+    needs TSPDT_TMDB_KEY and Node >= 22, and is skipped quietly otherwise so it
+    can never block or fail a sync. The node script only fetches films that are
+    missing certs, so re-running it is cheap and idempotent."""
+    if not os.environ.get("TSPDT_TMDB_KEY"):
+        print("[certs]  TSPDT_TMDB_KEY not set -- skipping age-rating backfill.")
+        return
+    script = Path(__file__).with_name("backfill_certs.mjs")
+    if not script.exists():
+        return
+    print("[certs]  backfilling age ratings for films missing them (node backfill_certs.mjs)...")
+    try:
+        subprocess.run(["node", str(script)], env={**os.environ, "TSPDT_DB": str(db_path)}, check=False)
+    except FileNotFoundError:
+        print("[certs]  node not found -- skipping age-rating backfill.")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Sync the TSPDT Starting List into SQLite.")
     ap.add_argument("--url", default=DEFAULT_URL, help="source .xls URL")
@@ -653,6 +675,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="where to save the downloaded .xls")
     ap.add_argument("--hard-delete", action="store_true",
                     help="physically delete vanished films instead of soft-deleting")
+    ap.add_argument("--no-certs", action="store_true",
+                    help="skip the post-sync age-rating backfill (backfill_certs.mjs)")
     ap.add_argument("--examples", type=int, default=10, help="example rows to print")
     args = ap.parse_args(argv)
 
@@ -682,6 +706,8 @@ def main(argv: list[str] | None = None) -> int:
         report(conn, stats, args.examples)
     finally:
         conn.close()
+    if not args.no_certs:
+        run_cert_backfill(args.db)
     return 0
 
 
