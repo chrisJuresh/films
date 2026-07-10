@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { downloadWithRadarrClient, RadarrError } from '../src/lib/server/radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, RadarrError } from '../src/lib/server/radarrClient.js';
 
 const settings = () => ({
   baseUrl: new URL('http://radarr:7878/radarr/'),
@@ -159,6 +159,41 @@ test('maps authentication and malformed responses to safe errors', async () => {
     (error) => error instanceof RadarrError
       && error.message === 'Radarr returned an invalid response.'
   );
+});
+
+test('radarrStatus reports download progress and quality', async () => {
+  const mock = mockFetch(
+    jsonResponse({ tmdbId: 348, title: 'Alien' }),
+    jsonResponse([{ id: 7, hasFile: false, monitored: true }]),
+    jsonResponse([{ movieId: 7, size: 1000, sizeleft: 250, quality: { quality: { name: 'Bluray-1080p' } }, trackedDownloadState: 'downloading', timeleft: '00:12:00' }])
+  );
+  const s = await radarrStatus('tt0078748', settings(), mock.fetch);
+  assert.equal(s.present, true);
+  assert.equal(s.hasFile, false);
+  assert.equal(s.queue.progress, 75);
+  assert.equal(s.queue.quality, 'Bluray-1080p');
+  assert.equal(s.queue.state, 'downloading');
+});
+
+test('radarrStatus reports a downloaded file with its quality', async () => {
+  const mock = mockFetch(
+    jsonResponse({ tmdbId: 348 }),
+    jsonResponse([{ id: 7, hasFile: true, monitored: true, sizeOnDisk: 8000000000,
+      movieFile: { quality: { quality: { name: 'Bluray-1080p' } }, mediaInfo: { resolution: '1920x1080', videoCodec: 'x265' } } }]),
+    jsonResponse([])
+  );
+  const s = await radarrStatus('tt0078748', settings(), mock.fetch);
+  assert.equal(s.present, true);
+  assert.equal(s.hasFile, true);
+  assert.equal(s.quality, 'Bluray-1080p');
+  assert.equal(s.resolution, '1920x1080');
+  assert.equal(s.queue, null);
+});
+
+test('radarrStatus returns not-present for a film Radarr does not have', async () => {
+  const mock = mockFetch(jsonResponse({ tmdbId: 348 }), jsonResponse([]));
+  const s = await radarrStatus('tt0078748', settings(), mock.fetch);
+  assert.deepEqual(s, { present: false });
 });
 
 test('does not expose Radarr validation details to the browser-facing error', async () => {

@@ -12,13 +12,17 @@
   let lbState = $state(data.film.lb_state ?? null);   // letterboxd: watched | unwatched | null
   let meta = $state(null);    // IMDb/TMDB enrichment
   let downloadState = $state('idle'); // idle | loading | queued | available
+  let radarr = $state(null);          // live Radarr status (added? progress? quality? errors?)
+  let radarrTimer;
 
   let loadedId;
   $effect(() => {
     const id = film.id_tspdt;
     status = film.status ?? null; lbState = film.lb_state ?? null;
     if (loadedId === id) return;
-    loadedId = id; meta = null; downloadState = 'idle';
+    loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
+    clearTimeout(radarrTimer);
+    loadRadarr(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
       .then((mm) => { if (loadedId === id) meta = mm; }).catch(() => { if (loadedId === id) meta = { enabled: false }; });
   });
@@ -81,6 +85,7 @@
       } else {
         toast(`Added “${title}” to Radarr and started a search.`, 'ok', 4200);
       }
+      loadRadarr(film.id_tspdt);
     } catch (cause) {
       downloadState = 'idle';
       toast(cause?.message || 'Could not connect to Radarr.', 'error', 4800);
@@ -107,6 +112,21 @@
   }
   function toggleRewatch() { setKind('rewatch', !rewatch); }
   function toggleUnfinished() { setKind('unfinished', !unfinished); }
+
+  // Live Radarr status, polled while a download is in flight.
+  async function loadRadarr(id) {
+    try {
+      const r = await fetch(`/api/radarr/${id}`);
+      const s = await r.json();
+      if (loadedId !== id) return;
+      radarr = s;
+      clearTimeout(radarrTimer);
+      if (s?.present && !s.hasFile && (s.queue || s.monitored)) {
+        radarrTimer = setTimeout(() => loadRadarr(id), 5000);
+      }
+    } catch { /* status is best-effort */ }
+  }
+  const gb = (n) => (n ? (n / 1e9).toFixed(n < 1e10 ? 2 : 1) + ' GB' : null);
 
   const money = (n) => (n ? '$' + Number(n).toLocaleString() : null);
   let director = $derived((ready && meta.directors?.length ? meta.directors.join(', ') : film.director));
@@ -164,6 +184,29 @@
         <button class="ghost sm rewatch" class:on={rewatch} onclick={toggleRewatch}><Icon name="rotate" size={14} /> {rewatch ? 'To rewatch' : 'Rewatch'}</button>
         <button class="ghost sm unfinished" class:on={unfinished} onclick={toggleUnfinished}><Icon name="hourglass" size={13} /> {unfinished ? 'Unfinished' : 'Didn’t finish'}</button>
       </div>
+
+      {#if radarr?.present}
+        <div class="radarr">
+          {#if radarr.queue}
+            <div class="rr-row">
+              <span class="rr-label">{radarr.queue.state === 'importPending' || radarr.queue.state === 'importing' ? 'Importing' : 'Downloading'}{radarr.queue.quality ? ' · ' + radarr.queue.quality : ''}</span>
+              <span class="rr-sub">{radarr.queue.progress != null ? radarr.queue.progress + '%' : ''}{radarr.queue.timeleft ? ' · ' + radarr.queue.timeleft + ' left' : ''}</span>
+            </div>
+            <div class="rr-bar" class:indef={radarr.queue.progress == null}><span style="width:{radarr.queue.progress ?? 100}%"></span></div>
+            {#if radarr.queue.error}<div class="rr-err"><Icon name="alert" size={13} /> {radarr.queue.error}</div>{/if}
+          {:else if radarr.hasFile}
+            <div class="rr-row">
+              <span class="rr-label ok"><Icon name="check" size={14} stroke={2.3} /> In your library</span>
+              <span class="rr-sub">{[radarr.quality, radarr.resolution, radarr.videoCodec, gb(radarr.sizeOnDisk)].filter(Boolean).join(' · ')}</span>
+            </div>
+          {:else}
+            <div class="rr-row">
+              <span class="rr-label">In Radarr</span>
+              <span class="rr-sub">{radarr.monitored ? 'monitored · searching…' : 'not monitored'}</span>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
   </div>
 
@@ -263,6 +306,17 @@
   .ghost.sm:hover { color: var(--text); }
   .ghost.rewatch.on { background: var(--rewatch); color: var(--rewatch-ink); border-color: var(--rewatch); }
   .ghost.unfinished.on { background: var(--unfinished); color: var(--unfinished-ink); border-color: var(--unfinished); }
+
+  .radarr { margin-top: 16px; padding: 11px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); }
+  .rr-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+  .rr-label { font-size: 13.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+  .rr-label.ok { color: var(--free); }
+  .rr-sub { color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; text-align: right; }
+  .rr-bar { margin-top: 9px; height: 6px; border-radius: 999px; background: var(--surface); overflow: hidden; }
+  .rr-bar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .6s ease; }
+  .rr-bar.indef span { width: 35% !important; animation: rr-indef 1.3s ease-in-out infinite; }
+  @keyframes rr-indef { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
+  .rr-err { margin-top: 9px; font-size: 12px; color: #e5675c; display: flex; align-items: center; gap: 6px; }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }

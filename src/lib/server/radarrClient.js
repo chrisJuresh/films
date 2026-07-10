@@ -121,3 +121,50 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
 
   return { status: 'queued', title: added?.title || lookup.title, radarrId: added?.id, alreadyAdded: false };
 }
+
+/**
+ * Read Radarr's live view of a film: whether it's added, its download progress,
+ * the quality/size it fetched, and any errors. Everything is best-effort — a
+ * failure of any single call degrades gracefully rather than throwing.
+ */
+export async function radarrStatus(imdbId, settings, fetchImpl = globalThis.fetch) {
+  if (!/^tt\d{7,10}$/i.test(imdbId || '')) return { present: false };
+
+  const lookup = await requestRadarr(settings, `movie/lookup/imdb?imdbId=${encodeURIComponent(imdbId)}`, {}, fetchImpl);
+  if (!lookup?.tmdbId) return { present: false };
+
+  const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
+  const movie = Array.isArray(existing) ? existing[0] : null;
+  if (!movie?.id) return { present: false };
+
+  let queue = null;
+  try {
+    const q = await requestRadarr(settings, `queue/details?movieIds=${movie.id}`, {}, fetchImpl);
+    const item = Array.isArray(q) ? (q.find((x) => x.movieId === movie.id) || q[0]) : null;
+    if (item) {
+      const size = Number(item.size) || 0;
+      const left = Number(item.sizeleft ?? 0);
+      const msgs = (item.statusMessages || []).flatMap((m) => m.messages || []);
+      queue = {
+        progress: size > 0 ? Math.max(0, Math.min(100, Math.round((1 - left / size) * 100))) : null,
+        state: item.trackedDownloadState || item.status || null,   // downloading | importPending | ...
+        timeleft: item.timeleft && item.timeleft !== '00:00:00' ? item.timeleft : null,
+        quality: item.quality?.quality?.name || null,
+        error: item.errorMessage || (msgs.length ? msgs.join('; ') : null)
+      };
+    }
+  } catch { /* queue read is optional */ }
+
+  const mf = movie.movieFile;
+  return {
+    present: true,
+    monitored: !!movie.monitored,
+    hasFile: !!movie.hasFile,
+    quality: mf?.quality?.quality?.name || null,
+    resolution: mf?.mediaInfo?.resolution || null,
+    videoCodec: mf?.mediaInfo?.videoCodec || null,
+    audioChannels: mf?.mediaInfo?.audioChannels || null,
+    sizeOnDisk: Number(movie.sizeOnDisk) || Number(mf?.size) || null,
+    queue
+  };
+}

@@ -1,6 +1,22 @@
 import { json } from '@sveltejs/kit';
 import { getFilmBasic } from '$lib/server/db.js';
-import { downloadWithRadarr, RadarrError } from '$lib/server/radarr.js';
+import { downloadWithRadarr, getRadarrStatus, RadarrError } from '$lib/server/radarr.js';
+
+// Live Radarr status for the film page (added? downloading? quality? errors?).
+// Never throws to the client — an unconfigured/unreachable Radarr just yields
+// { present: false } so the UI hides the panel gracefully.
+export async function GET({ params }) {
+  const id = Number(params.id);
+  if (!Number.isInteger(id) || id < 1) return json({ present: false });
+  const film = getFilmBasic(id);
+  if (!film?.imdb_id) return json({ present: false });
+  try {
+    return json(await getRadarrStatus(film.imdb_id));
+  } catch (cause) {
+    if (cause instanceof RadarrError && cause.status === 503) return json({ configured: false, present: false });
+    return json({ present: false, unavailable: true });
+  }
+}
 
 export async function POST({ params }) {
   const id = Number(params.id);
