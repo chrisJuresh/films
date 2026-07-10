@@ -170,7 +170,8 @@ export function getFacets() {
     genres: top(genres, 60),
     colours: top(colours, 6),
     decades: [...decades.entries()].sort((a, b) => a[0] - b[0]).map(([value, count]) => ({ value, count })),
-    certifications
+    certifications,
+    ages
   };
   return _facets;
 }

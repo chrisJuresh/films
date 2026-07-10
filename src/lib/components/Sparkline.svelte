@@ -77,9 +77,8 @@
     {#each g.dots as d}
       <circle cx={d.cx} cy={d.cy} r="3" fill="var(--accent)"><title>{d.yr}: rank {d.pos}</title></circle>
     {/each}
-    <!-- highlight latest edition -->
+    <!-- highlight latest edition (rank value is already on the y-axis) -->
     <circle cx={g.last.cx} cy={g.last.cy} r="5" fill="var(--accent)" stroke="var(--bg)" stroke-width="2" />
-    <text x={g.last.cx - 8} y={g.labelY} text-anchor="end" font-size="12" font-weight="700" fill="var(--text)">#{g.last.pos}</text>
 
     <!-- x year labels -->
     <text x={g.first.cx} y={H - 9} text-anchor="start" font-size="11" fill="var(--faint)">{g.minY}</text>

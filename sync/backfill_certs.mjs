@@ -10,14 +10,14 @@
 import { DatabaseSync } from 'node:sqlite';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { filmMinAge } from '../src/lib/server/certAge.mjs';
 
 const argv = process.argv.slice(2);
 const FORCE = argv.includes('--force');
+const RECOMPUTE = argv.includes('--recompute-ages');
 // No numeric arg => ALL ranked films (in rank order). Pass a number to cap it.
 const LIMIT = parseInt(argv.find((a) => /^\d+$/.test(a)) || process.env.CERT_BACKFILL_LIMIT || '0', 10);
 const SQL_LIMIT = LIMIT > 0 ? LIMIT : -1;   // SQLite: LIMIT -1 = no limit
-const KEY = process.env.TSPDT_TMDB_KEY;
-if (!KEY) { console.error('TSPDT_TMDB_KEY not set — skipping certification backfill.'); process.exit(0); }
 
 const DB_PATH = [process.env.TSPDT_DB, resolve(process.cwd(), 'tspdt.db'), '/srv/films/tspdt.db']
   .filter(Boolean).find((p) => existsSync(p));
@@ -29,6 +29,36 @@ db.exec(`CREATE TABLE IF NOT EXISTS film_cert (
   id_tspdt INTEGER NOT NULL, country TEXT NOT NULL, cert TEXT NOT NULL,
   PRIMARY KEY (id_tspdt, country, cert));`);
 db.exec('CREATE INDEX IF NOT EXISTS film_cert_cert ON film_cert(cert);');
+db.exec('CREATE TABLE IF NOT EXISTS film_age (id_tspdt INTEGER PRIMARY KEY, min_age INTEGER NOT NULL);');
+db.exec('CREATE INDEX IF NOT EXISTS film_age_age ON film_age(min_age);');
+
+const ageUpsert = db.prepare('INSERT INTO film_age(id_tspdt, min_age) VALUES(?,?) ON CONFLICT(id_tspdt) DO UPDATE SET min_age=excluded.min_age');
+const ageDel = db.prepare('DELETE FROM film_age WHERE id_tspdt = ?');
+function storeAge(id, certRows) {
+  const a = filmMinAge(certRows);
+  if (a == null) ageDel.run(id); else ageUpsert.run(id, a);
+}
+
+// --recompute-ages: rebuild film_age from the already-downloaded film_cert (no
+// network, no TMDB key). Run after changing the cert->age mapping in certAge.mjs.
+if (RECOMPUTE) {
+  const rows = db.prepare('SELECT id_tspdt, country, cert FROM film_cert ORDER BY id_tspdt').all();
+  db.exec('BEGIN');
+  let cur = null, certs = [], n = 0;
+  const flush = () => { if (cur != null) { storeAge(cur, certs); n++; } };
+  for (const r of rows) {
+    if (r.id_tspdt !== cur) { flush(); cur = r.id_tspdt; certs = []; }
+    certs.push({ country: r.country, cert: r.cert });
+  }
+  flush();
+  db.exec('COMMIT');
+  console.log(`Recomputed film_age for ${n} films from film_cert.`);
+  db.close();
+  process.exit(0);
+}
+
+const KEY = process.env.TSPDT_TMDB_KEY;
+if (!KEY) { console.error('TSPDT_TMDB_KEY not set — skipping certification backfill.'); process.exit(0); }
 
 const films = db.prepare(
   `SELECT id_tspdt, imdb_id FROM films
@@ -63,6 +93,7 @@ async function backfill(film) {
   }
   del.run(film.id_tspdt);
   for (const [country, cert] of certs) ins.run(film.id_tspdt, country, cert);
+  storeAge(film.id_tspdt, certs.map(([country, cert]) => ({ country, cert })));
   return certs.length;
 }
 

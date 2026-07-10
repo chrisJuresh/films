@@ -1,6 +1,7 @@
 <script>
   import Poster from '$lib/components/Poster.svelte';
   import Sparkline from '$lib/components/Sparkline.svelte';
+  import Icon from '$lib/components/Icon.svelte';
   import { displayTitle, gradientFor, colourLabel } from '$lib/util.js';
   import { counts, toast } from '$lib/stores.js';
 
@@ -29,10 +30,11 @@
   let rewatch = $derived(status === 'rewatch');
   let unfinished = $derived(status === 'unfinished');
   let downloadLabel = $derived(
-    downloadState === 'loading' ? '… Sending' :
-    downloadState === 'queued' ? '✓ Requested' :
-    downloadState === 'available' ? '✓ Downloaded' : '⬇ Download'
+    downloadState === 'loading' ? 'Sending…' :
+    downloadState === 'queued' ? 'Requested' :
+    downloadState === 'available' ? 'Downloaded' : 'Download'
   );
+  let downloadIcon = $derived(downloadState === 'queued' || downloadState === 'available' ? 'check' : 'download');
   // Age ratings: freshest from live enrichment, else the queryable film_cert set.
   let certs = $derived((ready && meta?.certifications?.length) ? meta.certifications : (film.certs || []));
 
@@ -132,7 +134,7 @@
       <div class="ratings">
         {#if ready && meta.imdb_rating}
           <a class="rt-badge imdb" href={meta.imdb_url} target="_blank" rel="noopener" title="{meta.imdb_votes} votes on IMDb">
-            <b>IMDb</b><span>★ {meta.imdb_rating}</span>
+            <b>IMDb</b><span><Icon name="star" size={12} /> {meta.imdb_rating}</span>
           </a>
         {/if}
         {#if ready && meta.rotten}<span class="rt-badge"><b>Rotten Tomatoes</b><span>{meta.rotten}</span></span>{/if}
@@ -149,18 +151,18 @@
       </div>
 
       <div class="cta">
-        <button class="btn primary" onclick={watchFilm}>▶ Watch</button>
-        <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}>{downloadLabel}</button>
-        {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener">▷ Trailer</a>{/if}
+        <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> Watch</button>
+        <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadIcon} size={16} /> {downloadLabel}</button>
+        {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
 
       <div class="actions">
-        <button class="ghost" class:on={watchlisted} onclick={toggleWatchlist}>{watchlisted ? '♥ On watchlist' : '♥ Watchlist'}</button>
-        <button class="ghost seen" class:on={seen} class:lb={lbWatched} onclick={toggleSeen}>{seen ? (lbWatched ? '✓ Seen · Letterboxd' : '✓ Seen') : '✓ Mark seen'}</button>
+        <button class="ghost" class:on={watchlisted} onclick={toggleWatchlist}><Icon name="heart" size={15} /> {watchlisted ? 'On watchlist' : 'Watchlist'}</button>
+        <button class="ghost seen" class:on={seen} class:lb={lbWatched} onclick={toggleSeen}><Icon name="check" size={16} stroke={2.3} /> {seen ? (lbWatched ? 'Seen · Letterboxd' : 'Seen') : 'Mark seen'}</button>
       </div>
       <div class="actions minor">
-        <button class="ghost sm rewatch" class:on={rewatch} onclick={toggleRewatch}>{rewatch ? '↻ To rewatch' : '↻ Rewatch'}</button>
-        <button class="ghost sm unfinished" class:on={unfinished} onclick={toggleUnfinished}>{unfinished ? '◐ Unfinished' : '◐ Didn’t finish'}</button>
+        <button class="ghost sm rewatch" class:on={rewatch} onclick={toggleRewatch}><Icon name="rotate" size={14} /> {rewatch ? 'To rewatch' : 'Rewatch'}</button>
+        <button class="ghost sm unfinished" class:on={unfinished} onclick={toggleUnfinished}><Icon name="hourglass" size={13} /> {unfinished ? 'Unfinished' : 'Didn’t finish'}</button>
       </div>
     </div>
   </div>
@@ -242,7 +244,7 @@
   .cta { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn { padding: 13px 22px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; text-decoration: none;
-    display: inline-flex; align-items: center; transition: transform .12s, border-color .12s; }
+    display: inline-flex; align-items: center; gap: 8px; transition: transform .12s, border-color .12s; }
   .btn:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
   .btn:disabled { opacity: .55; cursor: progress; }
   .btn.primary { background: linear-gradient(120deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #d98324));
@@ -250,7 +252,8 @@
 
   .actions { display: flex; gap: 10px; margin-top: 18px; }
   .ghost { padding: 9px 15px; border-radius: 10px; border: 1px solid var(--border); background: transparent;
-    color: var(--text); font-size: 13.5px; cursor: pointer; font-family: inherit; transition: all .12s; }
+    color: var(--text); font-size: 13.5px; cursor: pointer; font-family: inherit; transition: all .12s;
+    display: inline-flex; align-items: center; gap: 7px; }
   .ghost:hover { border-color: var(--border-strong); }
   .ghost.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .ghost.seen.on { background: var(--free); color: #06210b; border-color: var(--free); }

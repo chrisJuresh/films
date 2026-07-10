@@ -6,6 +6,7 @@
   import { counts as countsStore, theme } from '$lib/stores.js';
   import { colourLabel } from '$lib/util.js';
   import Toast from '$lib/components/Toast.svelte';
+  import Icon from '$lib/components/Icon.svelte';
 
   let { data, children } = $props();
 
@@ -73,12 +74,25 @@
   }
 
   let activeCount = $derived(
-    ['q', 'decade', 'genre', 'country', 'colour', 'cert', 'new'].reduce(
+    ['q', 'decade', 'genre', 'country', 'colour', 'maxage', 'new'].reduce(
       (n, k) => n + (($page.url.searchParams.get(k) || '') ? 1 : 0), 0)
   );
-  function clearAll() { navigate({ q: '', decade: '', genre: '', country: '', colour: '', cert: '', new: '' }); }
+  function clearAll() { navigate({ q: '', decade: '', genre: '', country: '', colour: '', maxage: '', new: '' }); }
 
   let userEmail = $derived(data?.user || null);
+
+  // Age-rating slider. maxage = highest rating age to show; 18 = off (everything,
+  // including unrated). A film's age is its most-restrictive country rating, so
+  // nothing unsuitable slips into a lower bracket.
+  let ageLive = $state(18);
+  $effect(() => {
+    const v = parseInt($page.url.searchParams.get('maxage') ?? '', 10);
+    ageLive = Number.isNaN(v) ? 18 : v;
+  });
+  let ageLabel = $derived(ageLive >= 18 ? 'All films' : ageLive <= 0 ? 'All-ages only' : `Up to age ${ageLive}`);
+  let ageCount = $derived((data.facets?.ages || []).reduce((n, a) => n + (a.age <= ageLive ? a.count : 0), 0));
+  function onAgeInput(e) { ageLive = +e.target.value; }
+  function onAgeCommit() { navigate({ maxage: ageLive >= 18 ? '' : String(ageLive) }); }
 
   function toggleTheme() {
     themeName = themeName === 'light' ? 'dark' : 'light';
@@ -96,7 +110,7 @@
   <button class="mb-burger" onclick={() => (menuOpen = true)} aria-label="Open filters and menu" aria-expanded={menuOpen}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
   </button>
-  <a class="mb-home" href="/" aria-label="Home">◆</a>
+  <a class="mb-home" href="/" aria-label="Home"><Icon name="diamond" size={15} /></a>
   <div class="mb-search search">
     <svg viewBox="0 0 24 24" class="search-ico" aria-hidden="true"><path d="M21 21l-4.3-4.3M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></svg>
     <input type="search" placeholder="Search title or director" value={q} oninput={onSearch}
@@ -109,9 +123,9 @@
   {#if !onFilm}
   <div class="scrim" class:show={menuOpen} onclick={closeMenu} aria-hidden="true"></div>
   <aside class="sidebar" class:open={menuOpen}>
-    <button class="drawer-close" onclick={closeMenu} aria-label="Close menu">✕</button>
+    <button class="drawer-close" onclick={closeMenu} aria-label="Close menu"><Icon name="x" size={16} /></button>
     <a class="brand" href="/">
-      <span class="brand-mark">◆</span><span class="brand-word">FILM&nbsp;INDEX</span>
+      <span class="brand-mark"><Icon name="diamond" size={15} /></span><span class="brand-word">FILM&nbsp;INDEX</span>
     </a>
 
     <div class="search">
@@ -185,26 +199,24 @@
         </div>
       </section>
 
-      {#if data.facets.certifications?.length}
+      {#if data.facets.ages?.length}
       <section>
-        <h4>Age rating</h4>
-        <div class="chips">
-          {#each data.facets.certifications as c}
-            <button class="chip" class:on={isSel('cert', c.value)} onclick={() => toggle('cert', c.value)} title="{c.count.toLocaleString()} films">{c.value}</button>
-          {/each}
-        </div>
+        <div class="fh"><h4>Age rating</h4>{#if ageLive < 18}<button class="clear" onclick={() => { ageLive = 18; navigate({ maxage: '' }); }}>Reset</button>{/if}</div>
+        <input class="age-range" type="range" min="0" max="18" step="1" value={ageLive}
+               oninput={onAgeInput} onchange={onAgeCommit} aria-label="Maximum age rating to show" />
+        <div class="age-meta"><span>{ageLabel}</span>{#if ageLive < 18}<span class="age-n">{ageCount.toLocaleString()} rated</span>{/if}</div>
       </section>
       {/if}
 
       <section>
         <button class="new-toggle" class:on={isSel('new', '1')} onclick={() => navigate({ new: isSel('new', '1') ? '' : '1' })}>
-          ✦ New in {data.facets.latestEdition} edition
+          <Icon name="sparkles" size={14} /> New in {data.facets.latestEdition} edition
         </button>
       </section>
     </div>
 
     <a class="side-link" href="/letterboxd" onclick={closeMenu}>
-      <span class="sl-ic">⬍</span> Letterboxd import &amp; sync
+      <span class="sl-ic"><Icon name="sync" size={15} /></span> Letterboxd import &amp; sync
     </a>
 
     <div class="side-foot">
@@ -215,7 +227,7 @@
         </div>
       {/if}
       <button class="theme" onclick={toggleTheme} title="Toggle theme">
-        {themeName === 'light' ? '☀ Light' : '☾ Dark'}
+        {#if themeName === 'light'}<Icon name="sun" size={15} /> Light{:else}<Icon name="moon" size={15} /> Dark{/if}
       </button>
     </div>
   </aside>

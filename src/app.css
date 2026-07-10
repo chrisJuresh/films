@@ -114,7 +114,20 @@ input, button, select { font-family: inherit; }
 .mini-search:focus { border-color: var(--accent); }
 
 .new-toggle { width: 100%; padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border);
-  background: var(--surface); color: var(--muted); font-size: 13px; cursor: pointer; text-align: left; transition: all .12s; }
+  background: var(--surface); color: var(--muted); font-size: 13px; cursor: pointer; text-align: left;
+  display: inline-flex; align-items: center; gap: 8px; transition: all .12s; }
+
+/* Age-rating slider */
+.age-range { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; margin: 4px 0 2px;
+  border-radius: 999px; background: var(--surface-2); cursor: pointer; outline: none; }
+.age-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 17px; height: 17px;
+  border-radius: 50%; background: var(--accent); border: 2px solid var(--bg); box-shadow: 0 1px 4px rgba(0,0,0,.4); cursor: pointer; }
+.age-range::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--accent);
+  border: 2px solid var(--bg); cursor: pointer; }
+.age-range:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); }
+.age-meta { display: flex; justify-content: space-between; align-items: baseline; margin-top: 6px;
+  font-size: 12.5px; color: var(--muted); }
+.age-meta .age-n { font-size: 11px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .new-toggle:hover { color: var(--text); border-color: var(--border-strong); }
 .new-toggle.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
 
@@ -132,7 +145,8 @@ input, button, select { font-family: inherit; }
 .whoami span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .theme { padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border);
-  background: var(--surface); color: var(--muted); font-size: 13px; cursor: pointer; transition: all .12s; }
+  background: var(--surface); color: var(--muted); font-size: 13px; cursor: pointer; transition: all .12s;
+  display: inline-flex; align-items: center; gap: 8px; }
 .theme:hover { color: var(--text); border-color: var(--border-strong); }
 
 /* form control (sort select on catalogue) */

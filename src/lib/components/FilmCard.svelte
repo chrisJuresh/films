@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import Poster from './Poster.svelte';
+  import Icon from './Icon.svelte';
   import { displayTitle } from '$lib/util.js';
   import { counts, toast } from '$lib/stores.js';
 
@@ -58,20 +59,20 @@
     {#if film.is_new}<span class="badge new">NEW</span>{/if}
     {#if watchlisted || seen || rewatch || unfinished}
       <div class="tags">
-        {#if watchlisted}<span class="tag wl" title="On watchlist">♥</span>{/if}
-        {#if seen}<span class="tag seen" class:lb={lbWatched} title={lbWatched ? 'Watched · from Letterboxd' : 'Watched'}>✓</span>{/if}
-        {#if rewatch}<span class="tag rewatch" title="To rewatch">↻</span>{/if}
-        {#if unfinished}<span class="tag unfinished" title="Didn't finish yet">◐</span>{/if}
+        {#if watchlisted}<span class="tag wl" title="On watchlist"><Icon name="heart" size={12} stroke={2.2} /></span>{/if}
+        {#if seen}<span class="tag seen" class:lb={lbWatched} title={lbWatched ? 'Watched · from Letterboxd' : 'Watched'}><Icon name="check" size={13} stroke={2.6} /></span>{/if}
+        {#if rewatch}<span class="tag rewatch" title="To rewatch"><Icon name="rotate" size={13} stroke={2.2} /></span>{/if}
+        {#if unfinished}<span class="tag unfinished" title="Didn't finish yet"><Icon name="hourglass" size={12} stroke={2.2} /></span>{/if}
       </div>
     {/if}
     <div class="acts">
       <div class="act-row">
-        <button class="act" class:on={watchlisted} onclick={clickWatchlist} aria-label="Toggle watchlist" title="Watchlist">♥</button>
-        <button class="act seen" class:on={seen} class:lb={lbWatched} onclick={clickSeen} aria-label="Toggle seen" title="Seen">✓</button>
+        <button class="act" class:on={watchlisted} onclick={clickWatchlist} aria-label="Toggle watchlist" title="Watchlist"><Icon name="heart" size={17} /></button>
+        <button class="act seen" class:on={seen} class:lb={lbWatched} onclick={clickSeen} aria-label="Toggle seen" title="Seen"><Icon name="check" size={18} stroke={2.4} /></button>
       </div>
       <div class="act-row minor">
-        <button class="act sm rewatch" class:on={rewatch} onclick={clickRewatch} aria-label="Toggle to-rewatch" title="To rewatch">↻</button>
-        <button class="act sm unfinished" class:on={unfinished} onclick={clickUnfinished} aria-label="Toggle didn't-finish" title="Didn't finish yet">◐</button>
+        <button class="act sm rewatch" class:on={rewatch} onclick={clickRewatch} aria-label="Toggle to-rewatch" title="To rewatch"><Icon name="rotate" size={15} /></button>
+        <button class="act sm unfinished" class:on={unfinished} onclick={clickUnfinished} aria-label="Toggle didn't-finish" title="Didn't finish yet"><Icon name="hourglass" size={14} /></button>
       </div>
     </div>
   </div>
