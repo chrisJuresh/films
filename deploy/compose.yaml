@@ -35,25 +35,14 @@ services:
       - "127.0.0.1:8100:3000"     # local health checks only (not the tunnel path)
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
-      - "com.centurylinklabs.watchtower.scope=films"
     networks:
       a3server:
         aliases: [films]          # tunnel ingress target: http://films:3000
 
-  # Auto-pulls new images CI pushes to GHCR. Scoped to 'films' so it only ever
-  # touches this stack, never the rest of the homelab (which, jellyfin, ...).
-  watchtower:
-    image: nickfedor/watchtower:latest
-    restart: unless-stopped
-    command: --interval 120 --cleanup --scope films --label-enable
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    labels:
-      - "com.centurylinklabs.watchtower.scope=films"
-
+# The single Watchtower + cloudflared tunnel live in the `infra` project now.
 networks:
   # Shared edge network for the a3server homelab: the single cloudflared tunnel
-  # (defined in the `which` project) and every origin it serves attach here.
+  # (in the `infra` project) and every origin it serves attach here.
   # Created once with:  docker network create a3server
   a3server:
     external: true
