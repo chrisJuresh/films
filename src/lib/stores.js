@@ -10,7 +10,7 @@ export function toast(message, type = 'info', ttl = 3400) {
 }
 
 /* header counts, updated after status changes */
-export const counts = writable({ watchlist: 0, seen: 0 });
+export const counts = writable({ watchlist: 0, seen: 0, rewatch: 0, unfinished: 0 });
 
 /* theme */
 export const theme = writable('dark');

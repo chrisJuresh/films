@@ -5,13 +5,15 @@
   import { counts, toast } from '$lib/stores.js';
 
   let { film, onstatus = () => {}, postersEnabled = false } = $props();
-  let status = $state(film.status ?? null);       // site status: 'watchlist' | 'seen' | null
-  let lbState = $state(film.lb_state ?? null);    // letterboxd:  'watched' | 'unwatched' | null
+  let status = $state(film.status ?? null);       // site status: watchlist|seen|rewatch|unfinished|null
+  let lbState = $state(film.lb_state ?? null);    // letterboxd:  watched|unwatched|null
   let poster = $state(null);
 
   let watchlisted = $derived(status === 'watchlist');
   let lbWatched = $derived(lbState === 'watched');
   let seen = $derived(status === 'seen' || lbWatched);
+  let rewatch = $derived(status === 'rewatch');
+  let unfinished = $derived(status === 'unfinished');
 
   // Pull real poster art (TMDB) for this card. Rendering is already bounded to
   // ~60 cards per page by the grid's infinite scroll, so a per-card fetch is fine.
@@ -36,15 +38,17 @@
       onstatus(film.id_tspdt, d);
     } catch { toast('Could not update your list.', 'error'); }
   }
+  const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
 
-  function clickWatchlist(e) { e.preventDefault(); e.stopPropagation(); apply('watchlist', !watchlisted); }
+  function clickWatchlist(e) { stop(e); apply('watchlist', !watchlisted); }
   function clickSeen(e) {
-    e.preventDefault(); e.stopPropagation();
+    stop(e);
     if (!seen) { apply('seen', true); return; }
-    // Un-ticking a Letterboxd-imported watch warns first (it's kept as a record).
     if (lbWatched && !confirm(`“${displayTitle(film.title)}” is marked watched from your Letterboxd import.\n\nUn-tick it here? It stays recorded on the Letterboxd page.`)) return;
     apply('seen', false);
   }
+  function clickRewatch(e) { stop(e); apply('rewatch', !rewatch); }
+  function clickUnfinished(e) { stop(e); apply('unfinished', !unfinished); }
 </script>
 
 <a class="card" href="/film/{film.id_tspdt}">
@@ -52,15 +56,23 @@
     <Poster title={film.title} rank={film.rank} src={poster} />
     <span class="rank">#{film.rank}</span>
     {#if film.is_new}<span class="badge new">NEW</span>{/if}
-    {#if watchlisted || seen}
+    {#if watchlisted || seen || rewatch || unfinished}
       <div class="tags">
         {#if watchlisted}<span class="tag wl" title="On watchlist">♥</span>{/if}
         {#if seen}<span class="tag seen" class:lb={lbWatched} title={lbWatched ? 'Watched · from Letterboxd' : 'Watched'}>✓</span>{/if}
+        {#if rewatch}<span class="tag rewatch" title="To rewatch">↻</span>{/if}
+        {#if unfinished}<span class="tag unfinished" title="Didn't finish yet">◐</span>{/if}
       </div>
     {/if}
     <div class="acts">
-      <button class="act" class:on={watchlisted} onclick={clickWatchlist} aria-label="Toggle watchlist" title="Watchlist">♥</button>
-      <button class="act seen" class:on={seen} class:lb={lbWatched} onclick={clickSeen} aria-label="Toggle seen" title="Seen">✓</button>
+      <div class="act-row">
+        <button class="act" class:on={watchlisted} onclick={clickWatchlist} aria-label="Toggle watchlist" title="Watchlist">♥</button>
+        <button class="act seen" class:on={seen} class:lb={lbWatched} onclick={clickSeen} aria-label="Toggle seen" title="Seen">✓</button>
+      </div>
+      <div class="act-row minor">
+        <button class="act sm rewatch" class:on={rewatch} onclick={clickRewatch} aria-label="Toggle to-rewatch" title="To rewatch">↻</button>
+        <button class="act sm unfinished" class:on={unfinished} onclick={clickUnfinished} aria-label="Toggle didn't-finish" title="Didn't finish yet">◐</button>
+      </div>
     </div>
   </div>
   <div class="meta">
@@ -82,28 +94,34 @@
     letter-spacing: .05em; padding: 3px 7px; border-radius: 6px; }
   .badge.new { background: color-mix(in srgb, var(--accent) 34%, #000 24%); color: #fff; }
 
-  /* Permanent status indicators (below the rank), shown whenever a film is on
-     the watchlist or marked seen. Seen is coloured by source: green = this site,
-     blue = imported from Letterboxd. */
+  /* Permanent status indicators (below the rank). Watchlist/seen are vivid;
+     rewatch/unfinished use quieter, desaturated colours -- they're secondary. */
   .tags { position: absolute; top: 37px; left: 9px; z-index: 2; display: flex; gap: 5px; }
   .tag { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
     font-size: 12px; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.45); }
   .tag.wl { background: var(--accent); color: var(--accent-ink); }
   .tag.seen { background: var(--free); color: #06210b; }
   .tag.seen.lb { background: var(--lb); color: var(--lb-ink); }
+  .tag.rewatch { background: var(--rewatch); color: var(--rewatch-ink); }
+  .tag.unfinished { background: var(--unfinished); color: var(--unfinished-ink); }
 
-  .acts { position: absolute; inset: auto 0 0 0; z-index: 3; display: flex; gap: 8px;
-    justify-content: center; padding: 12px; border-radius: 0 0 14px 14px;
-    background: linear-gradient(transparent, rgba(0,0,0,.8)); opacity: 0; transform: translateY(8px);
+  .acts { position: absolute; inset: auto 0 0 0; z-index: 3; display: flex; flex-direction: column;
+    align-items: center; gap: 6px; padding: 12px; border-radius: 0 0 14px 14px;
+    background: linear-gradient(transparent, rgba(0,0,0,.82)); opacity: 0; transform: translateY(8px);
     transition: all .18s; }
   .card:hover .acts { opacity: 1; transform: none; }
+  .act-row { display: flex; gap: 8px; justify-content: center; }
+  .act-row.minor { opacity: .82; }               /* rewatch / unfinished: quieter */
   .act { width: 38px; height: 38px; border-radius: 999px; border: 1px solid rgba(255,255,255,.28);
     background: rgba(18,18,22,.72); color: #fff; font-size: 15px; cursor: pointer; display: grid;
     place-items: center; backdrop-filter: blur(4px); transition: transform .14s, background .14s; }
+  .act.sm { width: 30px; height: 30px; font-size: 13px; }
   .act:hover { transform: scale(1.12); }
   .act.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .act.seen.on { background: var(--free); color: #06210b; border-color: var(--free); }
   .act.seen.on.lb { background: var(--lb); color: var(--lb-ink); border-color: var(--lb); }
+  .act.rewatch.on { background: var(--rewatch); color: var(--rewatch-ink); border-color: var(--rewatch); }
+  .act.unfinished.on { background: var(--unfinished); color: var(--unfinished-ink); border-color: var(--unfinished); }
   .meta { padding: 10px 2px 0; }
   .t { font-family: var(--font-display); font-weight: 600; font-size: 14.5px; line-height: 1.22;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

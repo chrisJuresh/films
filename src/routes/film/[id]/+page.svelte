@@ -25,6 +25,8 @@
   let watchlisted = $derived(status === 'watchlist');
   let lbWatched = $derived(lbState === 'watched');
   let seen = $derived(status === 'seen' || lbWatched);
+  let rewatch = $derived(status === 'rewatch');
+  let unfinished = $derived(status === 'unfinished');
   // Age ratings: freshest from live enrichment, else the queryable film_cert set.
   let certs = $derived((ready && meta?.certifications?.length) ? meta.certifications : (film.certs || []));
 
@@ -73,6 +75,8 @@
     if (lbWatched && !confirm(`“${displayTitle(film.title)}” is marked watched from your Letterboxd import.\n\nUn-tick it here? It stays recorded on the Letterboxd page.`)) return;
     setKind('seen', false);
   }
+  function toggleRewatch() { setKind('rewatch', !rewatch); }
+  function toggleUnfinished() { setKind('unfinished', !unfinished); }
 
   const money = (n) => (n ? '$' + Number(n).toLocaleString() : null);
   let director = $derived((ready && meta.directors?.length ? meta.directors.join(', ') : film.director));
@@ -125,6 +129,10 @@
       <div class="actions">
         <button class="ghost" class:on={watchlisted} onclick={toggleWatchlist}>{watchlisted ? '♥ On watchlist' : '♥ Watchlist'}</button>
         <button class="ghost seen" class:on={seen} class:lb={lbWatched} onclick={toggleSeen}>{seen ? (lbWatched ? '✓ Seen · Letterboxd' : '✓ Seen') : '✓ Mark seen'}</button>
+      </div>
+      <div class="actions minor">
+        <button class="ghost sm rewatch" class:on={rewatch} onclick={toggleRewatch}>{rewatch ? '↻ To rewatch' : '↻ Rewatch'}</button>
+        <button class="ghost sm unfinished" class:on={unfinished} onclick={toggleUnfinished}>{unfinished ? '◐ Unfinished' : '◐ Didn’t finish'}</button>
       </div>
     </div>
   </div>
@@ -219,6 +227,11 @@
   .ghost.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .ghost.seen.on { background: var(--free); color: #06210b; border-color: var(--free); }
   .ghost.seen.on.lb { background: var(--lb); color: var(--lb-ink); border-color: var(--lb); }
+  .actions.minor { margin-top: 10px; }
+  .ghost.sm { padding: 7px 13px; font-size: 12.5px; color: var(--muted); }
+  .ghost.sm:hover { color: var(--text); }
+  .ghost.rewatch.on { background: var(--rewatch); color: var(--rewatch-ink); border-color: var(--rewatch); }
+  .ghost.unfinished.on { background: var(--unfinished); color: var(--unfinished-ink); border-color: var(--unfinished); }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }

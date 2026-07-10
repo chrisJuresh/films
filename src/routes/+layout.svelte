@@ -128,6 +128,12 @@
       <button class="stat" class:on={statusNow() === 'seen'} onclick={() => { navigate({ status: 'seen' }); closeMenu(); }}>
         Seen <span>{$countsStore.seen}</span>
       </button>
+      <button class="stat minor" class:on={statusNow() === 'rewatch'} onclick={() => { navigate({ status: 'rewatch' }); closeMenu(); }}>
+        Rewatch <span>{$countsStore.rewatch}</span>
+      </button>
+      <button class="stat minor" class:on={statusNow() === 'unfinished'} onclick={() => { navigate({ status: 'unfinished' }); closeMenu(); }}>
+        Unfinished <span>{$countsStore.unfinished}</span>
+      </button>
     </nav>
 
     <div class="filters">

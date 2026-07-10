@@ -47,7 +47,7 @@ function getDb() {
     CREATE TABLE IF NOT EXISTS user_status (
       cf_user    TEXT NOT NULL,
       id_tspdt   INTEGER NOT NULL REFERENCES films(id_tspdt) ON DELETE CASCADE,
-      status     TEXT NOT NULL CHECK(status IN ('watchlist','seen')),
+      status     TEXT NOT NULL CHECK(status IN ('watchlist','seen','rewatch','unfinished')),
       updated_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (cf_user, id_tspdt)
     );
@@ -74,6 +74,27 @@ function getDb() {
       fetched_at    TEXT DEFAULT (datetime('now'))
     );
   `);
+  // Migration: older DBs created user_status with CHECK IN ('watchlist','seen').
+  // Rebuild it (preserving every row) so 'rewatch' / 'unfinished' are allowed.
+  const usSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_status'").get()?.sql || '';
+  if (!usSql.includes('rewatch')) {
+    // Atomic: if interrupted (e.g. a lock timeout), the whole rebuild rolls back
+    // and re-runs next open — the existing watchlist/seen rows are never stranded.
+    db.exec(`
+      BEGIN IMMEDIATE;
+      ALTER TABLE user_status RENAME TO _user_status_old;
+      CREATE TABLE user_status (
+        cf_user    TEXT NOT NULL,
+        id_tspdt   INTEGER NOT NULL REFERENCES films(id_tspdt) ON DELETE CASCADE,
+        status     TEXT NOT NULL CHECK(status IN ('watchlist','seen','rewatch','unfinished')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (cf_user, id_tspdt)
+      );
+      INSERT INTO user_status SELECT * FROM _user_status_old;
+      DROP TABLE _user_status_old;
+      COMMIT;
+    `);
+  }
   _db = db;
   return _db;
 }
@@ -160,6 +181,8 @@ export function queryFilms(p = {}) {
   // "seen" spans both trackers; "watchlist" is site-only.
   if (p.status === 'watchlist') where.push("us.status = 'watchlist'");
   else if (p.status === 'seen') where.push("(us.status = 'seen' OR lb.state = 'watched')");
+  else if (p.status === 'rewatch') where.push("us.status = 'rewatch'");
+  else if (p.status === 'unfinished') where.push("us.status = 'unfinished'");
 
   const sort = Object.hasOwn(SORTS, p.sort) ? SORTS[p.sort] : SORTS.rank;  // no prototype read-through
   const order = p.order === 'desc' ? 'DESC' : 'ASC';
@@ -217,34 +240,30 @@ function statusFor(db, user, id) {
     status: site, lb_state,
     watchlist: site === 'watchlist',
     site_seen: site === 'seen',
+    rewatch: site === 'rewatch',
+    unfinished: site === 'unfinished',
     lb_watched: lb_state === 'watched',
     seen: site === 'seen' || lb_state === 'watched',
     counts: counts(user)
   };
 }
 
-// kind = 'watchlist' | 'seen', on = boolean.
+// One site status per film (watchlist / seen / rewatch / unfinished), mutually
+// exclusive. kind is one of those; on = boolean.
+const SITE_STATUSES = new Set(['watchlist', 'seen', 'rewatch', 'unfinished']);
 export function setStatus(user, id, kind, on) {
   const db = getDb();
-  if (kind === 'watchlist') {
-    if (on) {
-      db.prepare(
-        `INSERT INTO user_status(cf_user, id_tspdt, status, updated_at) VALUES(?,?,'watchlist',datetime('now'))
-         ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET status='watchlist', updated_at=datetime('now')`
-      ).run(user, id);
-    } else {
-      db.prepare("DELETE FROM user_status WHERE cf_user=? AND id_tspdt=? AND status='watchlist'").run(user, id);
-    }
-  } else if (kind === 'seen') {
-    if (on) {
-      db.prepare(
-        `INSERT INTO user_status(cf_user, id_tspdt, status, updated_at) VALUES(?,?,'seen',datetime('now'))
-         ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET status='seen', updated_at=datetime('now')`
-      ).run(user, id);
-    } else {
-      // Unwatch: clear site-seen; if it came from Letterboxd, keep the row but
-      // mark it 'unwatched' (a record it was imported then removed here).
-      db.prepare("DELETE FROM user_status WHERE cf_user=? AND id_tspdt=? AND status='seen'").run(user, id);
+  if (!SITE_STATUSES.has(kind)) return statusFor(db, user, id);
+  if (on) {
+    db.prepare(
+      `INSERT INTO user_status(cf_user, id_tspdt, status, updated_at) VALUES(?,?,?,datetime('now'))
+       ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at`
+    ).run(user, id, kind);
+  } else {
+    db.prepare("DELETE FROM user_status WHERE cf_user=? AND id_tspdt=? AND status=?").run(user, id, kind);
+    // Un-ticking "seen" also retires a Letterboxd import: keep the lb_seen row
+    // but mark it 'unwatched' (a record it was imported, then removed here).
+    if (kind === 'seen') {
       db.prepare("UPDATE lb_seen SET state='unwatched', updated_at=datetime('now') WHERE cf_user=? AND id_tspdt=? AND state='watched'").run(user, id);
     }
   }
@@ -253,7 +272,12 @@ export function setStatus(user, id, kind, on) {
 
 export function counts(user = 'local') {
   const db = getDb();
-  const watchlist = db.prepare("SELECT count(*) c FROM user_status WHERE cf_user=? AND status='watchlist'").get(user).c;
+  const s = db.prepare(
+    `SELECT COALESCE(SUM(status='watchlist'),0) watchlist,
+            COALESCE(SUM(status='rewatch'),0)   rewatch,
+            COALESCE(SUM(status='unfinished'),0) unfinished
+     FROM user_status WHERE cf_user=?`
+  ).get(user);
   const seen = db.prepare(
     `SELECT count(*) c FROM (
        SELECT id_tspdt FROM user_status WHERE cf_user=? AND status='seen'
@@ -261,7 +285,7 @@ export function counts(user = 'local') {
        SELECT id_tspdt FROM lb_seen WHERE cf_user=? AND state='watched'
      )`
   ).get(user, user).c;
-  return { watchlist, seen };
+  return { watchlist: s.watchlist, seen, rewatch: s.rewatch, unfinished: s.unfinished };
 }
 
 /* ------------------------------------------------- enrichment cache ------ */

@@ -47,8 +47,7 @@
   function onStatus(id, st) {
     const active = data.filters?.status;
     if (!active) return;
-    const stillMatches = active === 'watchlist' ? st.watchlist : st.seen;
-    if (!stillMatches) { items = items.filter((x) => x.id_tspdt !== id); total = Math.max(0, total - 1); }
+    if (!st[active]) { items = items.filter((x) => x.id_tspdt !== id); total = Math.max(0, total - 1); }
   }
 
   onMount(() => {

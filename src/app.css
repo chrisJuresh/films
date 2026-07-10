@@ -13,6 +13,10 @@
   --free: #57c26a;
   --lb: #4bb4e8;
   --lb-ink: #05141f;
+  --rewatch: #9a8cd0;
+  --rewatch-ink: #100c22;
+  --unfinished: #8b93a3;
+  --unfinished-ink: #12151b;
   --shadow: 0 14px 44px rgba(0,0,0,.5);
   --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Times New Roman", serif;
   --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -32,6 +36,10 @@
   --free: #2f9d40;
   --lb: #2183bf;
   --lb-ink: #ffffff;
+  --rewatch: #6b5fb0;
+  --rewatch-ink: #ffffff;
+  --unfinished: #5f6672;
+  --unfinished-ink: #ffffff;
   --shadow: 0 14px 40px rgba(70,55,20,.15);
 }
 
@@ -77,6 +85,7 @@ input, button, select { font-family: inherit; }
 .stat.on { background: var(--surface-2); color: var(--text); border-color: var(--border); font-weight: 600; }
 .stat span { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .stat.on span { color: var(--accent); }
+.stat.minor { font-size: 13px; color: var(--faint); }   /* rewatch / unfinished: quieter than the primary three */
 
 .filters { display: flex; flex-direction: column; gap: 18px; }
 .fhead { display: flex; justify-content: space-between; align-items: center; }
