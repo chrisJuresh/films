@@ -283,20 +283,24 @@
 
       {#if radarr?.present}
         <div class="radarr">
-          {#if radarr.queue && (radarr.queue.error || radarr.queue.health === 'error' || radarr.queue.health === 'warning')}
+          {#if radarr.queue && radarr.queue.health === 'error'}
+            <!-- Only a hard error (failed import/download) gets the red state. A
+                 'warning' (e.g. stalled/no-connections) is transient — the torrent
+                 is usually still progressing — so it shows as Downloading below. -->
             <div class="rr-row">
               <span class="rr-label err"><Icon name="alert" size={13} /> Download problem</span>
-              <span class="rr-sub">{radarr.queue.quality || ''}</span>
+              <span class="rr-sub">{radarr.queue.quality && radarr.queue.quality !== 'Unknown' ? radarr.queue.quality : ''}</span>
             </div>
             {#if radarr.queue.error}<div class="rr-err">{radarr.queue.error}</div>{/if}
             {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">{[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
             <button class="rr-cancel" onclick={cancelDownload}>Cancel download</button>
           {:else if radarr.queue}
             <div class="rr-row">
-              <span class="rr-label">{radarr.queue.state === 'importPending' || radarr.queue.state === 'importing' ? 'Importing' : 'Downloading'}{radarr.queue.quality ? ' · ' + radarr.queue.quality : ''}</span>
+              <span class="rr-label">{radarr.queue.state === 'importPending' || radarr.queue.state === 'importing' ? 'Importing' : 'Downloading'}{radarr.queue.quality && radarr.queue.quality !== 'Unknown' ? ' · ' + radarr.queue.quality : ''}</span>
               <span class="rr-sub">{radarr.queue.progress != null ? radarr.queue.progress + '%' : ''}{radarr.queue.timeleft ? ' · ' + radarr.queue.timeleft + ' left' : ''}</span>
             </div>
             <div class="rr-bar" class:indef={radarr.queue.progress == null}><span style="width:{radarr.queue.progress ?? 100}%"></span></div>
+            {#if radarr.queue.health === 'warning' && radarr.queue.error}<div class="rr-warn"><Icon name="alert" size={12} /> {radarr.queue.error}</div>{/if}
             {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">via {[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
             <button class="rr-cancel" onclick={cancelDownload}>Cancel download</button>
           {:else if radarr.hasFile}
@@ -353,7 +357,7 @@
               <div class="rel-sub">{[r.quality, r.size ? gb(r.size) : null, r.seeders != null ? r.seeders + ' seeders' : null, r.languages.join('/'), r.indexer].filter(Boolean).join(' · ')}{r.score ? ' · CF ' + r.score : ''}</div>
               {#if r.rejected && r.rejections.length}<div class="rel-rej">{r.rejections.slice(0, 2).join('; ')}</div>{/if}
             </div>
-            <button class="btn sm" onclick={() => grab(r)}>Grab</button>
+            <button class="btn sm" class:warn={r.rejected} onclick={() => grab(r)}>{r.rejected ? 'Grab anyway' : 'Grab'}</button>
           </div>
         {/each}
       {/if}
@@ -468,6 +472,7 @@
   @keyframes rr-indef { 0% { margin-left: -35%; } 100% { margin-left: 100%; } }
   .rr-err { margin-top: 8px; font-size: 12px; color: #e5675c; }
   .rr-label.err { color: #e5675c; }
+  .rr-warn { margin-top: 8px; font-size: 11.5px; color: #d9a441; display: inline-flex; align-items: center; gap: 5px; }
   .rr-meta { margin-top: 7px; font-size: 11.5px; color: var(--faint); }
   .rr-cancel { margin-top: 9px; padding: 5px 11px; border-radius: 8px; border: 1px solid var(--border);
     background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; font-family: inherit; }
@@ -492,6 +497,7 @@
   .rel-rej { font-size: 11.5px; color: #e5675c; margin-top: 3px; }
   .rel.rej { opacity: .7; }
   .btn.sm { padding: 7px 14px; font-size: 13px; flex: none; }
+  .btn.sm.warn { color: #d9a441; border-color: color-mix(in srgb, #d9a441 45%, var(--border)); }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }
