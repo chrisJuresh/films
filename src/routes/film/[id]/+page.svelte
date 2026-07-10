@@ -14,6 +14,11 @@
   let downloadState = $state('idle'); // idle | loading | queued | available
   let radarr = $state(null);          // live Radarr status (added? progress? quality? errors?)
   let radarrTimer;
+  let watchInfo = $state(null);       // /api/watch: browser-playable? encoded? encode job?
+  let watchTimer;
+  let playing = $state(false);        // inline browser player open
+  let videoEl;
+  let savedAt = 0;
 
   let loadedId;
   $effect(() => {
@@ -21,8 +26,9 @@
     status = film.status ?? null; lbState = film.lb_state ?? null;
     if (loadedId === id) return;
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
-    clearTimeout(radarrTimer);
-    loadRadarr(id);
+    watchInfo = null; playing = false; savedAt = 0;
+    clearTimeout(radarrTimer); clearTimeout(watchTimer);
+    loadRadarr(id); loadWatch(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
       .then((mm) => { if (loadedId === id) meta = mm; }).catch(() => { if (loadedId === id) meta = { enabled: false }; });
   });
@@ -134,6 +140,47 @@
   }
   const gb = (n) => (n ? (n / 1e9).toFixed(n < 1e10 ? 2 : 1) + ' GB' : null);
 
+  // Watch/encode capabilities + polling while an encode runs.
+  async function loadWatch(id) {
+    try {
+      const w = await (await fetch(`/api/watch/${id}`)).json();
+      if (loadedId !== id) return;
+      watchInfo = w;
+      clearTimeout(watchTimer);
+      if (w?.encode?.state === 'running') watchTimer = setTimeout(() => loadWatch(id), 2500);
+    } catch { /* best-effort */ }
+  }
+  async function startEncode() {
+    try {
+      const r = await fetch(`/api/encode/${film.id_tspdt}`, { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.message || 'Could not start encoding.');
+      watchInfo = { ...(watchInfo || {}), encode: { state: d.state, percent: d.percent } };
+      toast('Encoding on the iGPU…', 'ok');
+      loadWatch(film.id_tspdt);
+    } catch (e) { toast(e.message || 'Encode failed to start.', 'error', 4600); }
+  }
+  function openPlayer() {
+    playing = true;
+    setTimeout(() => {
+      const pos = data.film.playback?.position;
+      if (videoEl && pos > 5) videoEl.currentTime = pos;   // resume where you left off
+      videoEl?.play?.().catch(() => {});
+    }, 60);
+  }
+  function onTimeUpdate() {
+    if (!videoEl) return;
+    const now = videoEl.currentTime;
+    if (Math.abs(now - savedAt) < 5) return;               // throttle to ~5s
+    savedAt = now;
+    fetch(`/api/playback/${film.id_tspdt}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ position: now, duration: videoEl.duration || null })
+    }).catch(() => {});
+  }
+  let pb = $derived(data.film.playback);
+  let pbPercent = $derived(pb?.position && pb?.duration ? Math.min(100, Math.round((pb.position / pb.duration) * 100)) : null);
+
   const money = (n) => (n ? '$' + Number(n).toLocaleString() : null);
   let director = $derived((ready && meta.directors?.length ? meta.directors.join(', ') : film.director));
   let runtime = $derived((ready && meta.runtime) || film.length_min);
@@ -156,6 +203,9 @@
       <h1>{displayTitle(film.title)}</h1>
       {#if ready && meta.tagline}<p class="tagline">“{meta.tagline}”</p>{/if}
       <div class="sub">{film.year ?? ''}{director ? ' · directed by ' + director : ''}</div>
+      {#if pbPercent != null}
+        <div class="pbwrap"><div class="pb"><span style="width:{pbPercent}%"></span></div><span class="pblabel">Watched {pbPercent}%</span></div>
+      {/if}
 
       <div class="ratings">
         {#if ready && meta.imdb_rating}
@@ -221,8 +271,33 @@
           {/if}
         </div>
       {/if}
+
+      {#if watchInfo && (watchInfo.hasFile || watchInfo.encoded)}
+        <div class="play">
+          {#if watchInfo.browser}
+            <button class="btn primary" onclick={openPlayer} disabled={playing}><Icon name="play" size={16} /> Watch in browser</button>
+          {:else if watchInfo.hasFile}
+            <button class="btn primary" onclick={openPlayer} disabled={playing}><Icon name="play" size={16} /> Stream (iGPU)</button>
+          {/if}
+          {#if watchInfo.encode?.state === 'running'}
+            <div class="enc"><span>Encoding · {watchInfo.encode.percent}%</span><div class="rr-bar"><span style="width:{watchInfo.encode.percent}%"></span></div></div>
+          {:else if watchInfo.encoded}
+            <a class="btn" href="/api/encode/{film.id_tspdt}/download"><Icon name="download" size={16} /> Download encoded</a>
+          {:else if watchInfo.hasFile}
+            <button class="btn" onclick={startEncode}><Icon name="download" size={16} /> Encode &amp; download (iGPU)</button>
+          {/if}
+        </div>
+        {#if watchInfo.encode?.state === 'error'}<div class="rr-err">Encode failed — {watchInfo.encode.error}</div>{/if}
+      {/if}
     </div>
   </div>
+
+  {#if playing}
+    <section class="player">
+      <video bind:this={videoEl} src="/api/stream/{film.id_tspdt}" controls autoplay playsinline ontimeupdate={onTimeUpdate}></video>
+      {#if !watchInfo?.browser}<div class="rr-meta">Live iGPU transcode · seeking is limited until an encoded copy exists.</div>{/if}
+    </section>
+  {/if}
 
   {#if ready && (meta.overview || meta.plot)}
     <section class="block"><div class="section-h">Synopsis</div><p class="overview">{meta.plot || meta.overview}</p></section>
@@ -333,6 +408,18 @@
   .rr-err { margin-top: 8px; font-size: 12px; color: #e5675c; }
   .rr-label.err { color: #e5675c; }
   .rr-meta { margin-top: 7px; font-size: 11.5px; color: var(--faint); }
+
+  .pbwrap { display: flex; align-items: center; gap: 10px; margin: 6px 0 12px; }
+  .pb { flex: 1; height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; max-width: 320px; }
+  .pb span { display: block; height: 100%; background: var(--free); border-radius: 999px; }
+  .pblabel { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+
+  .play { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
+  .enc { display: flex; flex-direction: column; gap: 5px; min-width: 200px; font-size: 12.5px; color: var(--muted); }
+
+  .player { margin-top: 30px; }
+  .player video { width: 100%; max-height: 78vh; border-radius: 16px; background: #000;
+    border: 1px solid var(--border-strong); box-shadow: var(--shadow); display: block; }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }

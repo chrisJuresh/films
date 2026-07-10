@@ -125,6 +125,23 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   return { status: 'queued', title: added?.title || lookup.title, radarrId: added?.id, alreadyAdded: false };
 }
 
+/** Server-side only: the film's actual file path + codecs (for transcoding).
+ *  Never sent to the browser. Returns null if Radarr has no file. */
+export async function movieFileInfo(imdbId, settings, fetchImpl = globalThis.fetch) {
+  if (!/^tt\d{7,10}$/i.test(imdbId || '')) return null;
+  const lookup = await requestRadarr(settings, `movie/lookup/imdb?imdbId=${encodeURIComponent(imdbId)}`, {}, fetchImpl);
+  if (!lookup?.tmdbId) return null;
+  const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
+  const mf = (Array.isArray(existing) ? existing[0] : null)?.movieFile;
+  if (!mf?.path) return null;
+  return {
+    path: mf.path,
+    videoCodec: mf.mediaInfo?.videoCodec || null,
+    audioCodec: mf.mediaInfo?.audioCodec || null,
+    size: Number(mf.size) || null
+  };
+}
+
 /**
  * Read Radarr's live view of a film: whether it's added, its download progress,
  * the quality/size it fetched, and any errors. Everything is best-effort — a

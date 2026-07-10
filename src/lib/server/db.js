@@ -79,6 +79,14 @@ function getDb() {
       json          TEXT NOT NULL,
       fetched_at    TEXT DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS playback (
+      cf_user    TEXT NOT NULL,
+      id_tspdt   INTEGER NOT NULL REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      position   REAL NOT NULL,
+      duration   REAL,
+      updated_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (cf_user, id_tspdt)
+    );
   `);
   // Migration: older DBs created user_status with CHECK IN ('watchlist','seen').
   // Rebuild it (preserving every row) so 'rewatch' / 'unfinished' are allowed.
@@ -270,6 +278,7 @@ export function getFilm(id, user = 'local') {
      ORDER BY e.poll_date ASC, e.edition_id ASC`
   ).all(id);
   row.certs = db.prepare('SELECT country, cert FROM film_cert WHERE id_tspdt = ? ORDER BY country, cert').all(id);
+  row.playback = db.prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, id) || null;
   return row;
 }
 
@@ -341,6 +350,17 @@ export function setMetaCache(id, obj, level) {
     `INSERT INTO film_meta(id_tspdt, level, json, fetched_at) VALUES(?,?,?,datetime('now'))
      ON CONFLICT(id_tspdt) DO UPDATE SET level=excluded.level, json=excluded.json, fetched_at=excluded.fetched_at`
   ).run(id, level, JSON.stringify(obj));
+}
+
+/* -------------------------------------------------- playback position ---- */
+export function setPlayback(user, id, position, duration) {
+  getDb().prepare(
+    `INSERT INTO playback(cf_user, id_tspdt, position, duration, updated_at) VALUES(?,?,?,?,datetime('now'))
+     ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET position=excluded.position, duration=excluded.duration, updated_at=excluded.updated_at`
+  ).run(user, id, position, duration ?? null);
+}
+export function getPlayback(user, id) {
+  return getDb().prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, id) || null;
 }
 
 /* ------------------------------------------------- age-rating certs ------ */

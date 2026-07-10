@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { downloadWithRadarrClient, radarrStatus, RadarrError } from './radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, movieFileInfo, RadarrError } from './radarrClient.js';
 
 export { RadarrError };
 
@@ -35,4 +35,8 @@ export function downloadWithRadarr(imdbId, year) {
 
 export function getRadarrStatus(imdbId) {
   return radarrStatus(imdbId, config());
+}
+
+export function getMovieFileInfo(imdbId) {
+  return movieFileInfo(imdbId, config());
 }

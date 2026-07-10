@@ -35,8 +35,25 @@ services:
       - RADARR_API_KEY=${RADARR_API_KEY:-}
       - RADARR_ROOT_FOLDER=${RADARR_ROOT_FOLDER:-}
       - RADARR_QUALITY_PROFILE_ID=${RADARR_QUALITY_PROFILE_ID:-}
+      # iGPU transcoding (encode/stream via VAAPI). ENCODE_DIR lives under the
+      # /srv/films mount so encoded copies persist. MEDIA_ROOTS are searched to
+      # turn a Radarr file path into a path this container can read (auto-picks
+      # the right bay); RADARR_MEDIA_PREFIX is the Radarr side stripped first.
+      - VAAPI_DEVICE=/dev/dri/renderD128
+      - ENCODE_DIR=/data/encoded
+      - MEDIA_ROOTS=${FILMS_MEDIA_ROOTS:-/mnt/bay1/media,/mnt/bay2/media,/mnt/bay4/media}
+      - RADARR_MEDIA_PREFIX=${FILMS_RADARR_MEDIA_PREFIX:-/data/media}
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128   # Intel iGPU (UHD 770) for VAAPI
+    group_add:
+      - "991"                     # host 'render' group — access to renderD128
     volumes:
-      - /srv/films:/data          # tspdt.db (+ -wal/-shm) and .postercache
+      - /srv/films:/data          # tspdt.db (+ -wal/-shm), .postercache, encoded/
+      # Movie library, read-only, mounted at the same host paths so Radarr's file
+      # paths resolve (same bays Jellyfin uses). Adjust if your layout differs.
+      - /mnt/bay1/media:/mnt/bay1/media:ro
+      - /mnt/bay2/media:/mnt/bay2/media:ro
+      - /mnt/bay4/media:/mnt/bay4/media:ro
     ports:
       - "127.0.0.1:8100:3000"     # local health checks only (not the tunnel path)
     labels:
