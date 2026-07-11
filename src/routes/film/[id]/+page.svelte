@@ -176,14 +176,13 @@
     const o = [];
     if (!watchInfo || !(watchInfo.hasFile || watchInfo.encoded)) return o;
     if (isTauri) {
-      o.push({ label: localPath ? 'Play local copy in mpv' : (playerInfo?.mpv ? 'Open in mpv' : 'Open in mpv (not found)'), act: () => playInApp('mpv') });
-      o.push({ label: 'Open in default player', act: () => playInApp('default') });
+      o.push({ label: localPath ? 'Play local copy' : 'Open in mpv', hint: localPath ? 'saved on this PC' : (playerInfo?.mpv ? 'best quality — the original file' : 'mpv not detected'), act: () => playInApp('mpv') });
+      o.push({ label: 'Open in default player', hint: 'your OS default', act: () => playInApp('default') });
     }
-    if (watchInfo.browser) o.push({ label: watchInfo.encoded ? 'Play encoded copy (browser)' : 'Play in browser', act: openPlayer });
-    else if (watchInfo.hasFile) o.push({ label: 'Stream in browser · iGPU transcode', act: openPlayer });
+    if (watchInfo.browser) o.push({ label: 'Play in browser', hint: watchInfo.encoded ? 'the encoded copy · seekable' : 'plays directly · seekable', act: openPlayer });
+    else if (watchInfo.hasFile) o.push({ label: 'Stream in browser', hint: 'instant · iGPU transcode · limited seeking', act: openPlayer });
     if (watchInfo.hasFile && !watchInfo.encoded && watchInfo.encode?.state !== 'running')
-      o.push({ label: 'Encode a browser copy · iGPU', act: startEncode });
-    if (watchInfo.encoded) o.push({ label: 'Download encoded copy', href: `/api/encode/${film.id_tspdt}/download` });
+      o.push({ label: 'Make a browser copy', hint: 'one-time iGPU encode → smooth seeking', act: startEncode });
     return o;
   });
   function pickWatch(o) { watchMenu = false; if (o.act) o.act(); }
@@ -464,11 +463,12 @@
           {#if watchMenu}
             <div class="watch-menu" role="menu">
               {#each watchOptions as o}
-                {#if o.href}
-                  <a class="wm-item" role="menuitem" href={o.href} onclick={() => watchMenu = false}>{o.label}</a>
-                {:else}
-                  <button class="wm-item" role="menuitem" onclick={() => pickWatch(o)}>{o.label}</button>
-                {/if}
+                <button class="wm-item" role="menuitem" onclick={() => pickWatch(o)}>
+                  <span class="wm-text">
+                    <span class="wm-label">{o.label}</span>
+                    {#if o.hint}<span class="wm-hint">{o.hint}</span>{/if}
+                  </span>
+                </button>
               {/each}
             </div>
           {/if}
@@ -498,15 +498,14 @@
           <button class="btn" class:primary={!watchable} onclick={downloadFilm} disabled={dlBtn.disabled} aria-busy={dlBtn.spin}><Icon name={dlBtn.icon} size={16} spin={dlBtn.spin} /> {dlBtn.label}</button>
         {/if}
         <button class="btn" class:primary={!watchable} onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
-        {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
+        {#if ready && meta.trailer}<a class="btn ghost2" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
 
       {#if !isTauri && !hideNudge}
         <div class="app-nudge">
           <div class="app-nudge-ic"><Icon name="monitor" size={17} /></div>
           <div class="app-nudge-txt">
-            <b>Best picture quality is in the desktop app</b>
-            <span>In-browser playback transcodes on the fly — lower quality and no seeking. The app plays the original file in mpv: full resolution, instant seeking, tuned for your display.</span>
+            <b>Best quality is in the desktop app</b>
           </div>
           <a class="app-nudge-cta" href="https://github.com/chrisJuresh/films/releases/latest" target="_blank" rel="noopener">Get the app</a>
           <button class="app-nudge-x" onclick={dismissNudge} aria-label="Dismiss"><Icon name="x" size={14} /></button>
@@ -583,21 +582,11 @@
         </div>
       {/if}
 
-      {#if watchInfo && (watchInfo.hasFile || watchInfo.encoded)}
-        <div class="play">
-          {#if !watchInfo.browser && !isTauri}
-            <button class="btn" onclick={openPlayer} disabled={playing}><Icon name="play" size={16} /> Stream (iGPU transcode)</button>
-          {/if}
-          {#if watchInfo.encode?.state === 'running'}
-            <div class="enc"><span>Encoding · {watchInfo.encode.percent}%</span><div class="rr-bar"><span style="width:{watchInfo.encode.percent}%"></span></div></div>
-          {:else if watchInfo.encoded}
-            <a class="btn" href="/api/encode/{film.id_tspdt}/download"><Icon name="download" size={16} /> Download encoded</a>
-          {:else if watchInfo.hasFile}
-            <button class="btn" onclick={startEncode}><Icon name="download" size={16} /> Encode &amp; download (iGPU)</button>
-          {/if}
-        </div>
-        {#if isTauri && playerInfo}<div class="rr-meta">Desktop · {playerInfo.os}{playerInfo.mpv ? ' · mpv ready' : ' · using system default player'}</div>{/if}
-        {#if watchInfo.encode?.state === 'error'}<div class="rr-err">Encode failed — {watchInfo.encode.error}</div>{/if}
+      {#if watchInfo?.encode?.state === 'running'}
+        <div class="statusline"><Icon name="sync" size={13} spin /> <span>Making a browser copy · {watchInfo.encode.percent}%</span>
+          <div class="sl-bar"><span style="width:{watchInfo.encode.percent}%"></span></div></div>
+      {:else if watchInfo?.encode?.state === 'error'}
+        <div class="statusline err"><Icon name="alert" size={13} /> Encode failed — {watchInfo.encode.error}</div>
       {/if}
     </div>
   </div>
@@ -774,6 +763,9 @@
   .btn:disabled { opacity: .55; cursor: progress; }
   .btn.primary { background: linear-gradient(120deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #d98324));
     color: var(--accent-ink); border: none; box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 30%, transparent); }
+  /* Tertiary (e.g. Trailer): same size, visually recessive so it doesn't compete. */
+  .btn.ghost2 { background: transparent; border-color: var(--border); color: var(--muted); font-weight: 500; }
+  .btn.ghost2:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
 
   .actions { display: flex; gap: 10px; margin-top: 18px; }
   .ghost { padding: 9px 15px; border-radius: 10px; border: 1px solid var(--border); background: transparent;
@@ -814,8 +806,15 @@
     border: 1px solid var(--border); background: transparent; color: var(--faint); cursor: pointer; transition: all .12s; }
   .pbreset:hover { color: var(--text); border-color: var(--border-strong); }
 
-  .play { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
-  .enc { display: flex; flex-direction: column; gap: 5px; min-width: 200px; font-size: 12.5px; color: var(--muted); }
+  /* One compact status line (encode progress, etc.) instead of a row of buttons. */
+  .statusline { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-top: 14px; font-size: 12.5px;
+    color: var(--muted); font-variant-numeric: tabular-nums; }
+  .statusline.err { color: #e5675c; }
+  .sl-bar { flex: 1; min-width: 120px; max-width: 260px; height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .sl-bar span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .5s ease; }
+  .wm-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .wm-label { font-size: 13px; }
+  .wm-hint { font-size: 11px; color: var(--muted); }
 
   .player { margin-top: 30px; }
   .player video { width: 100%; max-height: 78vh; border-radius: 16px; background: #000;
@@ -864,7 +863,7 @@
   .watch-split.has-caret .btn:first-child { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
   .watch-split .btn.caret { border-top-left-radius: 3px; border-bottom-left-radius: 3px;
     padding-left: 9px; padding-right: 9px; margin-left: 2px; }
-  .watch-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 40; min-width: 234px; padding: 6px;
+  .watch-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 40; min-width: 248px; max-width: 340px; padding: 6px;
     background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 13px; box-shadow: var(--shadow); }
   .wm-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 9px 11px;
     border-radius: 8px; border: 0; background: transparent; color: var(--text); font-size: 13px; cursor: pointer;
