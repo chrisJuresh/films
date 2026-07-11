@@ -1,8 +1,10 @@
 import { json, error } from '@sveltejs/kit';
 import { getFilmBasic } from '$lib/server/db.js';
-import { getReleases, grabReleaseFor, RadarrError } from '$lib/server/radarr.js';
+import { getReleases, grabReleaseFor, pushReleaseFor, RadarrError } from '$lib/server/radarr.js';
 
-// GET: interactive search → candidate releases. POST {guid, indexerId}: grab one.
+// GET: interactive search (Radarr, with a Prowlarr year-fallback) → candidates.
+// POST: grab one — a Radarr release by {guid, indexerId}, or a Prowlarr release
+// (source: 'prowlarr') pushed into Radarr so it still imports.
 export async function GET({ params }) {
   const id = Number(params.id);
   const film = id > 0 ? getFilmBasic(id) : null;
@@ -15,11 +17,15 @@ export async function GET({ params }) {
 }
 
 export async function POST({ request }) {
-  const { guid, indexerId } = await request.json().catch(() => ({}));
-  if (!guid) throw error(400, 'A release guid is required.');
+  const body = await request.json().catch(() => ({}));
   try {
-    return json(await grabReleaseFor(guid, indexerId));
+    if (body.source === 'prowlarr') {
+      return json(await pushReleaseFor(body));
+    }
+    if (!body.guid) throw error(400, 'A release guid is required.');
+    return json(await grabReleaseFor(body.guid, body.indexerId));
   } catch (cause) {
+    if (cause?.status && cause?.body) throw cause;   // re-throw SvelteKit error()
     throw error(cause instanceof RadarrError ? cause.status : 502, cause?.message || 'Could not grab that release.');
   }
 }

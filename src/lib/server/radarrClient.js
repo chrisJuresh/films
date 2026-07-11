@@ -181,15 +181,36 @@ export async function searchReleases(imdbId, settings, hints = {}, fetchImpl = g
     title: r.title, quality: r.quality?.quality?.name || null,
     size: Number(r.size) || null, seeders: r.seeders ?? null,
     languages: (r.languages || []).map((l) => l.name).filter(Boolean),
-    score: r.customFormatScore ?? 0, rejected: !!r.rejected, rejections: r.rejections || []
+    score: r.customFormatScore ?? 0, rejected: !!r.rejected, rejections: r.rejections || [],
+    source: 'radarr'
   })).sort((a, b) => (b.score - a.score) || ((b.seeders || 0) - (a.seeders || 0)));
-  return { releases: releases.slice(0, 50) };
+  return { releases: releases.slice(0, 50), title: movie?.title || lookup.title, year: movie?.year ?? lookup.year };
 }
 
-/** Grab a specific release the user chose. */
+/** Grab a specific release the user chose (from Radarr's own interactive search).
+ *  A manual grab like this bypasses Radarr's RSS rejection reasons. */
 export async function grabRelease(guid, indexerId, settings, fetchImpl = globalThis.fetch) {
   if (!guid || indexerId == null) throw new RadarrError('A release id is required.', 400);
   await requestRadarr(settings, 'release', { method: 'POST', body: { guid, indexerId } }, fetchImpl);
+  return { grabbed: true };
+}
+
+/** Grab a release found outside Radarr (e.g. via Prowlarr) by pushing it into
+ *  Radarr's pipeline. Radarr parses the title, matches it to the movie (by title
+ *  + primary/secondary year) and sends it to the download client, so it still
+ *  imports and renames. Used for the Prowlarr year-fallback. */
+export async function pushRelease(release, settings, fetchImpl = globalThis.fetch) {
+  const downloadUrl = release?.downloadUrl || release?.magnetUrl;
+  if (!release?.title || !downloadUrl) throw new RadarrError('That release is missing a download link.', 400);
+  const protocol = String(release.protocol || 'torrent').toLowerCase() === 'usenet' ? 'Usenet' : 'Torrent';
+  const body = {
+    title: release.title,
+    downloadUrl,
+    protocol,
+    publishDate: release.publishDate || new Date().toISOString()
+  };
+  if (release.indexer) body.indexer = release.indexer;
+  await requestRadarr(settings, 'release/push', { method: 'POST', body }, fetchImpl);
   return { grabbed: true };
 }
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { downloadWithRadarrClient, radarrStatus, searchReleases, grabRelease, RadarrError } from '../src/lib/server/radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, searchReleases, grabRelease, pushRelease, RadarrError } from '../src/lib/server/radarrClient.js';
 
 const settings = () => ({
   baseUrl: new URL('http://radarr:7878/radarr/'),
@@ -207,6 +207,34 @@ test('grabRelease posts the chosen release guid + indexer', async () => {
   assert.equal(mock.calls[0].url.pathname, '/radarr/api/v3/release');
   assert.equal(mock.calls[0].options.method, 'POST');
   assert.deepEqual(JSON.parse(mock.calls[0].options.body), { guid: 'abc', indexerId: 3 });
+});
+
+test('pushRelease hands a Prowlarr-sourced release to Radarr via release/push', async () => {
+  const mock = mockFetch(jsonResponse({ approved: true }));
+  const rel = { title: 'Jeanne Dielman 1975 1080p BluRay x264', downloadUrl: 'http://prowlarr/dl/abc',
+    protocol: 'torrent', indexer: '1337x', publishDate: '2024-01-01T00:00:00Z' };
+  const r = await pushRelease(rel, settings(), mock.fetch);
+  assert.equal(r.grabbed, true);
+  assert.equal(mock.calls[0].url.pathname, '/radarr/api/v3/release/push');
+  assert.equal(mock.calls[0].options.method, 'POST');
+  const body = JSON.parse(mock.calls[0].options.body);
+  assert.equal(body.title, rel.title);
+  assert.equal(body.downloadUrl, rel.downloadUrl);
+  assert.equal(body.protocol, 'Torrent');            // normalised, capitalised
+  assert.equal(body.publishDate, rel.publishDate);
+  assert.equal(body.indexer, '1337x');
+});
+
+test('pushRelease falls back to the magnet link and rejects a linkless release', async () => {
+  const mock = mockFetch(jsonResponse({}));
+  await pushRelease({ title: 'X', magnetUrl: 'magnet:?xt=abc', protocol: 'usenet' }, settings(), mock.fetch);
+  const body = JSON.parse(mock.calls[0].options.body);
+  assert.equal(body.downloadUrl, 'magnet:?xt=abc');
+  assert.equal(body.protocol, 'Usenet');
+  await assert.rejects(
+    pushRelease({ title: 'no link' }, settings(), async () => { throw new Error('should not fetch'); }),
+    (e) => e instanceof RadarrError && e.status === 400
+  );
 });
 
 test('does not expose Radarr validation details to the browser-facing error', async () => {

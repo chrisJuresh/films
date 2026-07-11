@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, RadarrError } from './radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, pushRelease, RadarrError } from './radarrClient.js';
+import { searchProwlarr, prowlarrEnabled } from './prowlarr.js';
 import { syncFilmDownloads } from './db.js';
 
 export { RadarrError };
@@ -46,11 +47,30 @@ export function cancelRadarr(imdbId) {
   return cancelDownload(imdbId, config());
 }
 
-export function getReleases(imdbId, year) {
-  return searchReleases(imdbId, config(), { year });
+// Interactive release list for the picker. Radarr's own search first; if it
+// finds nothing (usually a TMDB-vs-release year mismatch, which Radarr can't be
+// made to search around), fall back to a Prowlarr text search on our catalogue
+// year — but only if Prowlarr is configured.
+export async function getReleases(imdbId, year) {
+  const rr = await searchReleases(imdbId, config(), { year });
+  if (rr.releases.length > 0 || !prowlarrEnabled()) {
+    return { releases: rr.releases, source: 'radarr' };
+  }
+  try {
+    const pw = await searchProwlarr(rr.title, year);
+    return { releases: pw, source: pw.length ? 'prowlarr' : 'radarr', fallback: true };
+  } catch {
+    return { releases: [], source: 'radarr' };   // Prowlarr down → no fallback, not an error
+  }
 }
+
 export function grabReleaseFor(guid, indexerId) {
   return grabRelease(guid, indexerId, config());
+}
+
+// Grab a Prowlarr-sourced release by pushing it into Radarr's pipeline.
+export function pushReleaseFor(release) {
+  return pushRelease(release, config());
 }
 
 // Refresh the film_download snapshot from Radarr's library, at most every 45s.

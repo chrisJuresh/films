@@ -34,6 +34,7 @@
   let releasesLoading = $state(false);
   let grabbing = $state(null);        // guid of the release currently being grabbed
   let cancelling = $state(false);
+  let releasesFallback = $state(false); // results came from the Prowlarr year-fallback
 
   let loadedId;
   $effect(() => {
@@ -42,7 +43,7 @@
     if (loadedId === id) return;
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
-    grabbing = null; cancelling = false;
+    grabbing = null; cancelling = false; releasesFallback = false;
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
@@ -129,6 +130,7 @@
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.message || 'Release search failed.');
       releases = d.releases || [];
+      releasesFallback = !!d.fallback;
     } catch (e) { toast(e.message || 'Release search failed.', 'error', 4600); }
     finally { releasesLoading = false; }
   }
@@ -136,9 +138,12 @@
     if (grabbing) return;
     grabbing = rel.guid;
     try {
+      const payload = rel.source === 'prowlarr'
+        ? { source: 'prowlarr', title: rel.title, downloadUrl: rel.downloadUrl, magnetUrl: rel.magnetUrl, protocol: rel.protocol, indexer: rel.indexer, publishDate: rel.publishDate }
+        : { guid: rel.guid, indexerId: rel.indexerId };
       const r = await fetch(`/api/radarr/${film.id_tspdt}/releases`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ guid: rel.guid, indexerId: rel.indexerId })
+        body: JSON.stringify(payload)
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.message || 'Grab failed.');
@@ -359,13 +364,14 @@
   {#if releases}
     <section class="block releases">
       <div class="section-h">Releases · pick one to grab</div>
+      {#if releasesFallback}<p class="rr-meta">Radarr found nothing on its year, so these are from a Prowlarr search on {film.year}. Grabbing pushes the release back through Radarr so it still imports.</p>{/if}
       {#if releases.length === 0}
-        <p class="rr-meta">No releases found — Radarr searches on the film's year, so fix that first if it's wrong.</p>
+        <p class="rr-meta">No releases found{releasesFallback ? '' : ' — Radarr searches on TMDB’s year for this film'}.</p>
       {:else}
         {#each releases as r}
           <div class="rel" class:rej={r.rejected}>
             <div class="rel-info">
-              <div class="rel-title">{r.title}</div>
+              <div class="rel-title">{r.title}{#if r.source === 'prowlarr'}<span class="rel-tag">Prowlarr</span>{/if}</div>
               <div class="rel-sub">{[r.quality, r.size ? gb(r.size) : null, r.seeders != null ? r.seeders + ' seeders' : null, r.languages.join('/'), r.indexer].filter(Boolean).join(' · ')}{r.score ? ' · CF ' + r.score : ''}</div>
               {#if r.rejected && r.rejections.length}<div class="rel-rej">{r.rejections.slice(0, 2).join('; ')}</div>{/if}
             </div>
@@ -507,6 +513,8 @@
   .releases .rel { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--border); }
   .rel-info { flex: 1; min-width: 0; }
   .rel-title { font-size: 13.5px; word-break: break-word; line-height: 1.3; }
+  .rel-tag { margin-left: 7px; font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 5px; padding: 1px 5px; vertical-align: middle; }
   .rel-sub { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
   .rel-rej { font-size: 11.5px; color: #e5675c; margin-top: 3px; }
   .rel.rej { opacity: .7; }

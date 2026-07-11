@@ -35,6 +35,14 @@ services:
       - RADARR_API_KEY=${RADARR_API_KEY:-}
       - RADARR_ROOT_FOLDER=${RADARR_ROOT_FOLDER:-}
       - RADARR_QUALITY_PROFILE_ID=${RADARR_QUALITY_PROFILE_ID:-}
+      # Optional Prowlarr fallback for the release picker. Radarr searches
+      # indexers on TMDB's year (which it owns), so films whose release year
+      # differs (e.g. festival premiere vs theatrical) find nothing. When set,
+      # the picker falls back to a Prowlarr text search on OUR catalogue year and
+      # pushes the chosen release back through Radarr. Only the API key is needed
+      # (URL defaults to Prowlarr's in-stack address + /prowlarr URL base).
+      - PROWLARR_URL=${PROWLARR_URL:-http://prowlarr:9696/prowlarr}
+      - PROWLARR_API_KEY=${PROWLARR_API_KEY:-}
       # iGPU transcoding (encode/stream via VAAPI). ENCODE_DIR lives under the
       # /srv/films mount so encoded copies persist. MEDIA_ROOTS are searched to
       # turn a Radarr file path into a path this container can read (auto-picks
