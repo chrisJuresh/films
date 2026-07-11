@@ -12,3 +12,18 @@ commands.allow = ["open_in_player"]
 identifier = "allow-player-info"
 description = "Allow the films site to read the device's player capabilities."
 commands.allow = ["player_info"]
+
+[[permission]]
+identifier = "allow-check-update"
+description = "Allow the films site to check GitHub for a newer desktop release."
+commands.allow = ["check_update"]
+
+[[permission]]
+identifier = "allow-local-file"
+description = "Allow the films site to query whether a film is cached locally."
+commands.allow = ["local_file"]
+
+[[permission]]
+identifier = "allow-download-to-pc"
+description = "Allow the films site to download (preload) a film to this device."
+commands.allow = ["download_to_pc"]

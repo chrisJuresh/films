@@ -6,5 +6,5 @@
   "remote": {
     "urls": ["https://films.chrisj.uk"]
   },
-  "permissions": ["core:default", "allow-open-in-player", "allow-player-info"]
+  "permissions": ["core:default", "core:event:default", "allow-open-in-player", "allow-player-info", "allow-check-update", "allow-local-file", "allow-download-to-pc"]
 }

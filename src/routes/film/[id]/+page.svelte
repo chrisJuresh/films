@@ -7,18 +7,26 @@
   import { counts, toast } from '$lib/stores.js';
 
   let isTauri = $state(false);        // running inside the Tauri desktop app?
-  let playerInfo = $state(null);      // { os, arch, mpv } from the desktop app
+  let playerInfo = $state(null);      // { os, arch, mpv, mpv_path } from the app
   let hideNudge = $state(true);       // hide the "get the app" nudge (until we know)
+  let updateInfo = $state(null);      // { available, latest, url } from GitHub releases
+  let localPath = $state(null);       // this film's locally-cached file (app only)
+  let dlToPc = $state(null);          // { pct, done } while preloading to this PC
+  let dlUnlisten = null;
   onMount(() => {
     const t = window.__TAURI__;
     if (t?.core?.invoke) {
       isTauri = true;
       t.core.invoke('player_info').then((i) => { playerInfo = i; }).catch(() => {});
+      t.core.invoke('check_update').then((u) => { updateInfo = u; }).catch(() => {});
     } else {
       hideNudge = localStorage.getItem('films-hide-app-nudge') === '1';
     }
   });
   function dismissNudge() { hideNudge = true; try { localStorage.setItem('films-hide-app-nudge', '1'); } catch { /* ignore */ } }
+  function openRelease() {
+    updateInfo?.url && window.__TAURI__?.core?.invoke('open_in_player', { url: updateInfo.url, prefer: 'default' }).catch(() => {});
+  }
 
   let { data } = $props();
   let film = $derived(data.film);
@@ -86,8 +94,11 @@
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
     grabbing = null; cancelling = false; releasesFallback = false; sortBy = 'quality'; watchMenu = false;
     dlMenu = false; grabLinks = null; pbCleared = false; certsOpen = false;
+    localPath = null; dlToPc = null;
+    if (dlUnlisten) { dlUnlisten(); dlUnlisten = null; }
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
+    if (isTauri && window.__TAURI__?.core) window.__TAURI__.core.invoke('local_file', { id }).then((p) => { if (loadedId === id) localPath = p; }).catch(() => {});
     fetch(`/api/meta/${id}`).then((r) => r.json())
       .then((mm) => { if (loadedId === id) meta = mm; }).catch(() => { if (loadedId === id) meta = { enabled: false }; });
   });
@@ -127,22 +138,47 @@
   }
   // Open in the native player (Tauri → mpv/OS default) or fall back to browser.
   function openInPlayer() {
+    playInApp('mpv');
+  }
+  // Open in the desktop app's native player. Prefers a locally-cached copy, else
+  // streams the ORIGINAL master. prefer='default' uses the OS default handler.
+  function playInApp(prefer) {
     const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
     if (t?.core?.invoke) {
-      // Native player gets the ORIGINAL file (best quality — no lossy re-encode).
-      const url = new URL(`/api/source/${film.id_tspdt}`, window.location.origin).href;
-      t.core.invoke('open_in_player', { url, title: displayTitle(film.title) })
-        .then((used) => toast(`Opening in ${used || 'your player'}…`, 'ok'))
-        .catch((e) => toast('Could not open the player: ' + e, 'error', 4600));
+      const target = localPath || new URL(`/api/source/${film.id_tspdt}`, window.location.origin).href;
+      t.core.invoke('open_in_player', { url: target, title: displayTitle(film.title), prefer })
+        .then((used) => toast(`Opening in ${used}…`, 'ok'))
+        .catch((e) => toast(String(e), 'error', 7000));   // e.g. "mpv isn't installed…"
       return;
     }
     openPlayer();
+  }
+  async function saveToPc() {
+    const t = window.__TAURI__;
+    if (!t?.core?.invoke || !t?.event?.listen) return;
+    dlToPc = { pct: 0, done: false };
+    const url = new URL(`/api/source/${film.id_tspdt}`, window.location.origin).href;
+    if (dlUnlisten) { dlUnlisten(); dlUnlisten = null; }
+    dlUnlisten = await t.event.listen('films-download-progress', (e) => {
+      const d = e.payload;
+      if (!d || d.id !== film.id_tspdt) return;
+      dlToPc = { pct: d.total ? Math.round((d.received / d.total) * 100) : 0, done: d.done };
+    });
+    try {
+      localPath = await t.core.invoke('download_to_pc', { url, id: film.id_tspdt, ext: 'mkv' });
+      dlToPc = { pct: 100, done: true };
+      toast('Saved to this PC — it now plays locally.', 'ok');
+    } catch (e) { toast('Download failed: ' + e, 'error', 6000); dlToPc = null; }
+    finally { if (dlUnlisten) { dlUnlisten(); dlUnlisten = null; } }
   }
   // The specific "watch this way" options behind the Watch button's caret.
   let watchOptions = $derived.by(() => {
     const o = [];
     if (!watchInfo || !(watchInfo.hasFile || watchInfo.encoded)) return o;
-    if (isTauri) o.push({ label: playerInfo?.mpv ? 'Open in mpv' : 'Open in default player', act: openInPlayer });
+    if (isTauri) {
+      o.push({ label: localPath ? 'Play local copy in mpv' : (playerInfo?.mpv ? 'Open in mpv' : 'Open in mpv (not found)'), act: () => playInApp('mpv') });
+      o.push({ label: 'Open in default player', act: () => playInApp('default') });
+    }
     if (watchInfo.browser) o.push({ label: watchInfo.encoded ? 'Play encoded copy (browser)' : 'Play in browser', act: openPlayer });
     else if (watchInfo.hasFile) o.push({ label: 'Stream in browser · iGPU transcode', act: openPlayer });
     if (watchInfo.hasFile && !watchInfo.encoded && watchInfo.encode?.state !== 'running')
@@ -421,7 +457,7 @@
 
       <div class="cta">
         <div class="watch-split" class:has-caret={watchOptions.length > 1} bind:this={splitEl}>
-          <button class="btn" class:primary={watchable} onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
+          <button class="btn" class:primary={watchable} onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? (playerInfo?.mpv ? 'Watch in mpv' : 'Watch') : 'Watch'}</button>
           {#if watchOptions.length > 1}
             <button class="btn caret" class:primary={watchable} aria-label="Choose how to watch" aria-expanded={watchMenu} onclick={() => watchMenu = !watchMenu}><Icon name="chevron" size={15} /></button>
           {/if}
@@ -474,6 +510,23 @@
           </div>
           <a class="app-nudge-cta" href="https://github.com/chrisJuresh/films/releases/latest" target="_blank" rel="noopener">Get the app</a>
           <button class="app-nudge-x" onclick={dismissNudge} aria-label="Dismiss"><Icon name="x" size={14} /></button>
+        </div>
+      {/if}
+
+      {#if isTauri && (updateInfo?.available || watchable)}
+        <div class="app-tools">
+          {#if updateInfo?.available}
+            <button class="app-update" onclick={openRelease} title="Open the latest release to download"><Icon name="download" size={14} /> Update available · v{updateInfo.latest}</button>
+          {/if}
+          {#if watchable}
+            {#if localPath}
+              <span class="app-saved"><Icon name="check" size={13} stroke={2.4} /> Saved to this PC · plays locally</span>
+            {:else if dlToPc && !dlToPc.done}
+              <div class="app-dl"><span>Saving to PC · {dlToPc.pct}%</span><div class="pb"><span style="width:{dlToPc.pct}%"></span></div></div>
+            {:else}
+              <button class="btn sm" onclick={saveToPc}><Icon name="hdd" size={14} /> Save to PC</button>
+            {/if}
+          {/if}
         </div>
       {/if}
 
@@ -702,6 +755,18 @@
   .app-nudge-x { flex: none; width: 26px; height: 26px; border-radius: 999px; border: 0; background: transparent;
     color: var(--faint); cursor: pointer; display: grid; place-items: center; }
   .app-nudge-x:hover { color: var(--text); }
+
+  /* Desktop-app tools (update pill + preload-to-PC). */
+  .app-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 14px 0 2px; }
+  .app-update { display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px; border-radius: 9px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border)); background: color-mix(in srgb, var(--accent) 12%, transparent);
+    color: var(--text); font-size: 12.5px; font-weight: 600; }
+  .app-update:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+  .app-saved { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--free); }
+  .app-dl { display: flex; flex-direction: column; gap: 5px; min-width: 200px; font-size: 12px; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .app-dl .pb { height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+  .app-dl .pb span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .4s ease; }
   .btn { padding: 13px 22px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; text-decoration: none;
     display: inline-flex; align-items: center; gap: 8px; transition: transform .12s, border-color .12s; }
