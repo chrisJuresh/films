@@ -49,18 +49,30 @@ export async function createCategory(settings, name, cookie, fetchImpl = globalT
   } catch { /* already exists / not fatal */ }
 }
 
-/** Add a torrent by URL or magnet, with a category + tags. */
+/** Add a torrent by URL or magnet, with a category + tags. qB adds a URL
+ *  asynchronously (it fetches the .torrent in the background), so success can be
+ *  "pending" rather than immediate. */
 export async function addTorrent(settings, { url, category, tags }, cookie, fetchImpl = globalThis.fetch) {
   const fd = new FormData();
   fd.append('urls', url);
   if (category) fd.append('category', category);
   if (tags) fd.append('tags', tags);
-  fd.append('paused', 'false');
   const res = await fetchImpl(new URL('api/v2/torrents/add', settings.baseUrl), {
     method: 'POST', headers: { Cookie: cookie, Referer: ref(settings) }, body: fd
   });
-  const text = await res.text().catch(() => '');
-  if (res.status !== 200 || /fail/i.test(text)) throw new QbError(`qBittorrent refused the torrent (HTTP ${res.status}).`);
+  if (res.status === 409) return true;                                   // already added
+  const text = (await res.text().catch(() => '')).trim();
+  if (res.status < 200 || res.status >= 300) throw new QbError(`qBittorrent refused the torrent (HTTP ${res.status}).`);
+  if (/^fails\.?$/i.test(text)) throw new QbError('qBittorrent could not add the torrent.');   // older qB
+  // qB 5.x returns JSON counts (HTTP 202). Only a pure failure means nothing was
+  // accepted or queued; success_count/pending_count > 0 both mean it took it.
+  if (text.startsWith('{')) {
+    try {
+      const j = JSON.parse(text);
+      if ((j.success_count ?? 0) === 0 && (j.pending_count ?? 0) === 0 && (j.failure_count ?? 0) > 0)
+        throw new QbError('qBittorrent rejected the torrent link.');
+    } catch (e) { if (e instanceof QbError) throw e; }
+  }
   return true;
 }
 

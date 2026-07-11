@@ -34,15 +34,24 @@ test('login rejects bad credentials', async () => {
   await assert.rejects(login(settings(), mock.fetch), (e) => e instanceof QbError);
 });
 
-test('addTorrent posts to torrents/add and reports a refusal', async () => {
+test('addTorrent accepts old "Ok.", qB5 pending JSON, and 409; rejects failures', async () => {
   const ok = mockFetch(new Response('Ok.', { status: 200 }));
-  const r = await addTorrent(settings(), { url: 'magnet:?x', category: 'films', tags: 'films-import,films-movie-7' }, 'SID=abc', ok.fetch);
-  assert.equal(r, true);
+  assert.equal(await addTorrent(settings(), { url: 'magnet:?x', category: 'films', tags: 'films-import,films-movie-7' }, 'SID=abc', ok.fetch), true);
   assert.equal(ok.calls[0].url.pathname, '/api/v2/torrents/add');
   assert.equal(ok.calls[0].options.method, 'POST');
 
-  const bad = mockFetch(new Response('Fails.', { status: 200 }));
-  await assert.rejects(addTorrent(settings(), { url: 'x' }, 'SID=abc', bad.fetch), (e) => e instanceof QbError);
+  // qB 5.x: HTTP 202 + JSON, pending_count>0 means it took the URL (async fetch).
+  const pending = mockFetch(new Response('{"added_torrent_ids":[],"failure_count":0,"pending_count":1,"success_count":0}', { status: 202, headers: { 'content-type': 'application/json' } }));
+  assert.equal(await addTorrent(settings(), { url: 'http://x/t' }, 'SID=abc', pending.fetch), true);
+
+  const dup = mockFetch(new Response('Conflict', { status: 409 }));
+  assert.equal(await addTorrent(settings(), { url: 'http://x/t' }, 'SID=abc', dup.fetch), true);   // already added
+
+  const badText = mockFetch(new Response('Fails.', { status: 200 }));
+  await assert.rejects(addTorrent(settings(), { url: 'x' }, 'SID=abc', badText.fetch), (e) => e instanceof QbError);
+
+  const badJson = mockFetch(new Response('{"failure_count":1,"pending_count":0,"success_count":0}', { status: 202 }));
+  await assert.rejects(addTorrent(settings(), { url: 'x' }, 'SID=abc', badJson.fetch), (e) => e instanceof QbError);
 });
 
 test('listTorrents filters by tag and returns the array', async () => {
