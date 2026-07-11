@@ -154,30 +154,34 @@ export async function cancelDownload(imdbId, settings, fetchImpl = globalThis.fe
   return { removed };
 }
 
-/** Bulk map of imdbId -> download state across the whole Radarr library, for
- *  the sidebar filter. 'downloaded' | 'downloading' | 'error'. */
+/** Bulk map of imdbId -> { state, progress } across the whole Radarr library,
+ *  for the sidebar filter + poster badges/bars. state is
+ *  'downloaded' | 'downloading' | 'wanted' | 'error'; progress is 0-100 while
+ *  downloading, else null. */
 export async function libraryState(settings, fetchImpl = globalThis.fetch) {
   const movies = await requestRadarr(settings, 'movie', {}, fetchImpl);
   const list = Array.isArray(movies) ? movies : [];
   const byId = new Map();
-  const state = new Map();
+  const out = new Map();
   for (const m of list) {
     byId.set(m.id, m);
     if (!m.imdbId) continue;
-    if (m.hasFile) state.set(m.imdbId, 'downloaded');
-    else if (m.monitored) state.set(m.imdbId, 'wanted');       // in Radarr, monitored, no file yet
+    if (m.hasFile) out.set(m.imdbId, { state: 'downloaded', progress: 100 });
+    else if (m.monitored) out.set(m.imdbId, { state: 'wanted', progress: null });   // monitored, no file yet
   }
   try {
     const q = await requestRadarr(settings, 'queue/details', {}, fetchImpl);
     for (const it of (Array.isArray(q) ? q : [])) {
       const m = byId.get(it.movieId);
-      if (!m?.imdbId) continue;
-      const errored = it.trackedDownloadStatus === 'error' || it.trackedDownloadStatus === 'warning';
-      if (errored) state.set(m.imdbId, 'error');
-      else if (state.get(m.imdbId) !== 'downloaded') state.set(m.imdbId, 'downloading');
+      if (!m?.imdbId || out.get(m.imdbId)?.state === 'downloaded') continue;
+      const size = Number(it.size) || 0, left = Number(it.sizeleft ?? 0);
+      const progress = size > 0 ? Math.max(0, Math.min(99, Math.round((1 - left / size) * 100))) : null;
+      // A 'warning' (e.g. stalled) is transient — still downloading, not an error.
+      const state = it.trackedDownloadStatus === 'error' ? 'error' : 'downloading';
+      out.set(m.imdbId, { state, progress });
     }
   } catch { /* queue optional */ }
-  return state;
+  return out;
 }
 
 /** Interactive search: ensure the film is in Radarr (added monitored, no auto-

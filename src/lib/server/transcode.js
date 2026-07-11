@@ -29,13 +29,21 @@ export function startEncode(id, src, out, duration, quality = '1080') {
   const job = { state: 'running', percent: 0, out, error: null };
   jobs.set(id, job);
 
+  // Tuned for a colour-calibrated Dell S3220DGF (1440p, SDR/sRGB, 8-bit, HDR off):
+  //   - cap at the panel's native 1440p, never upscale (upscaling only bloats size;
+  //     the GPU upscales 1080p→1440p at playback just as well)
+  //   - H.264 High profile, 8-bit 4:2:0 (nv12) BT.709 — exactly what an SDR sRGB
+  //     display wants, and universally browser-playable
+  //   - QP 18: visually transparent for VAAPI H.264 (quality over file size)
+  //   - AAC 192k stereo
+  const maxH = quality === '720' ? 720 : quality === '1080' ? 1080 : 1440;
   const args = [
     '-hide_banner', '-nostdin', '-y',
     '-vaapi_device', VAAPI_DEVICE,
     '-i', src,
-    '-vf', vf(quality === '720' ? 720 : 1080),
-    '-c:v', 'h264_vaapi', '-qp', '23',
-    '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
+    '-vf', vf(maxH),
+    '-c:v', 'h264_vaapi', '-profile:v', 'high', '-qp', '18',
+    '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
     '-movflags', '+faststart',
     '-progress', 'pipe:1', '-nostats',
     part
@@ -71,14 +79,14 @@ export function startEncode(id, src, out, duration, quality = '1080') {
 
 /** On-the-fly transcode to a fragmented MP4 stream. Returns the child process;
  *  the caller pipes .stdout to the HTTP response and kills it on disconnect. */
-export function streamTranscode(src, { maxH = 720 } = {}) {
+export function streamTranscode(src, { maxH = 1080 } = {}) {
   const args = [
     '-hide_banner', '-nostdin',
     '-vaapi_device', VAAPI_DEVICE,
     '-i', src,
     '-vf', vf(maxH),
-    '-c:v', 'h264_vaapi', '-qp', '24',
-    '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
+    '-c:v', 'h264_vaapi', '-profile:v', 'high', '-qp', '22',
+    '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
     '-f', 'mp4', '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
     'pipe:1'
   ];

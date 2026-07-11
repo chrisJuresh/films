@@ -27,11 +27,15 @@ export async function login(settings, fetchImpl = globalThis.fetch) {
   } catch { throw new QbError('Could not reach qBittorrent.'); }
   if (res.status === 403) throw new QbError('qBittorrent temporarily banned this client (too many failed logins).');
   const text = await res.text().catch(() => '');
-  if (res.status !== 200 || /fail/i.test(text)) throw new QbError('qBittorrent rejected the credentials.');
-  const raw = (res.headers.getSetCookie?.() || []).join('; ') || res.headers.get('set-cookie') || '';
-  const m = /SID=([^;]+)/.exec(raw);
+  if (/fail/i.test(text)) throw new QbError('qBittorrent rejected the credentials.');
+  // Success is HTTP 200 ("Ok.") on older builds or 204 (empty) on current ones —
+  // the real signal is the session cookie, whose name is QBT_SID_<port> now (was
+  // SID). Return the whole name=value so callers send the right Cookie header.
+  const set = res.headers.getSetCookie?.() || [];
+  const raw = set.length ? set.join('\n') : (res.headers.get('set-cookie') || '');
+  const m = /(QBT_SID[^=;\s]*|SID)=([^;]+)/.exec(raw);
   if (!m) throw new QbError('qBittorrent did not return a session cookie.');
-  return `SID=${m[1]}`;
+  return `${m[1]}=${m[2]}`;
 }
 
 /** Best-effort: make sure a category exists (qB also auto-creates on add). */

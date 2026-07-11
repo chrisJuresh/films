@@ -27,7 +27,7 @@ export async function GET({ params, request }) {
   if (browserPlayable(mf)) return fileResponse(src, range, {});
 
   // On-the-fly iGPU transcode → fragmented MP4. Not seekable; killed on cancel.
-  const proc = streamTranscode(src, { maxH: 720 });
+  const proc = streamTranscode(src, { maxH: 1080 });
   const body = new ReadableStream({
     start(controller) {
       proc.stdout.on('data', (c) => { controller.enqueue(c); if (controller.desiredSize <= 0) proc.stdout.pause(); });

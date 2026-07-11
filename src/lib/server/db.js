@@ -89,10 +89,13 @@ function getDb() {
     );
     CREATE TABLE IF NOT EXISTS film_download (
       id_tspdt INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
-      state    TEXT NOT NULL             -- downloaded | downloading | error
+      state    TEXT NOT NULL,            -- downloaded | downloading | wanted | error
+      progress INTEGER                   -- 0-100 while downloading, else null
     );
     CREATE INDEX IF NOT EXISTS film_download_state ON film_download(state);
   `);
+  // Migration for DBs created before film_download had a progress column.
+  try { db.exec('ALTER TABLE film_download ADD COLUMN progress INTEGER'); } catch { /* already present */ }
   // Migration: older DBs created user_status with CHECK IN ('watchlist','seen').
   // Rebuild it (preserving every row) so 'rewatch' / 'unfinished' are allowed.
   const usSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='user_status'").get()?.sql || '';
@@ -258,7 +261,7 @@ export function queryFilms(p = {}) {
   const items = db.prepare(
     `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, f.country,
             f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.is_new,
-            us.status, lb.state AS lb_state, fd.state AS download
+            us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress
      FROM films f ${joins} WHERE ${wc}
      ORDER BY ${sort} ${order}, f.latest_rank ASC
      LIMIT ? OFFSET ?`
@@ -376,17 +379,20 @@ export function getPlayback(user, id) {
 
 /* ---------------------------------------------- Radarr download state ---- */
 // Replace film_download with a fresh snapshot mapping our films to Radarr's
-// download state. stateByImdb: iterable of [imdbId, state].
+// download state. stateByImdb: iterable of [imdbId, { state, progress }].
 export function syncFilmDownloads(stateByImdb) {
   const db = getDb();
   const sel = db.prepare('SELECT id_tspdt FROM films WHERE imdb_id = ?');
   const rows = [];
-  for (const [imdb, st] of stateByImdb) { const r = imdb && sel.get(imdb); if (r) rows.push([r.id_tspdt, st]); }
+  for (const [imdb, v] of stateByImdb) {
+    const r = imdb && sel.get(imdb);
+    if (r) rows.push([r.id_tspdt, v?.state ?? v, v?.progress ?? null]);   // tolerate a bare state string
+  }
   db.exec('BEGIN');
   try {
     db.exec('DELETE FROM film_download');
-    const ins = db.prepare('INSERT OR REPLACE INTO film_download(id_tspdt, state) VALUES(?,?)');
-    for (const [id, st] of rows) ins.run(id, st);
+    const ins = db.prepare('INSERT OR REPLACE INTO film_download(id_tspdt, state, progress) VALUES(?,?,?)');
+    for (const [id, st, pct] of rows) ins.run(id, st, pct);
     db.exec('COMMIT');
   } catch (e) { db.exec('ROLLBACK'); throw e; }
 }

@@ -23,6 +23,12 @@ test('login returns the SID cookie', async () => {
   assert.equal(mock.calls[0].options.method, 'POST');
 });
 
+test('login accepts a 204 + QBT_SID_<port> cookie (current qB)', async () => {
+  const mock = mockFetch(new Response(null, { status: 204, headers: { 'set-cookie': 'QBT_SID_8081=abc+def; HttpOnly; path=/' } }));
+  const cookie = await login(settings(), mock.fetch);
+  assert.equal(cookie, 'QBT_SID_8081=abc+def');       // whole name=value, not just SID=
+});
+
 test('login rejects bad credentials', async () => {
   const mock = mockFetch(new Response('Fails.', { status: 200 }));
   await assert.rejects(login(settings(), mock.fetch), (e) => e instanceof QbError);

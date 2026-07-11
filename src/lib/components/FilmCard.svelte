@@ -17,6 +17,7 @@
   let unfinished = $derived(status === 'unfinished');
   // Radarr download state (global, not per-user): downloaded|downloading|wanted|error
   let download = $derived(film.download ?? null);
+  let dlProgress = $derived(film.download_progress ?? null);   // 0-100 while downloading
 
   // Pull real poster art (TMDB) for this card. Rendering is already bounded to
   // ~60 cards per page by the grid's infinite scroll, so a per-card fetch is fine.
@@ -73,6 +74,9 @@
         {#if unfinished}<span class="tag unfinished" title="Didn't finish yet"><Icon name="hourglass" size={12} stroke={2.2} /></span>{/if}
       </div>
     {/if}
+    {#if download === 'downloading' && dlProgress != null}
+      <div class="dlbar" title="Downloading · {dlProgress}%"><span style="width:{dlProgress}%"></span></div>
+    {/if}
     <div class="acts">
       <div class="act-row">
         <button class="act" class:on={watchlisted} onclick={clickWatchlist} aria-label="Toggle watchlist" title="Watchlist"><Icon name="heart" size={17} /></button>
@@ -112,6 +116,10 @@
   .dtag.want { background: #6b7280; }               /* wanted — monitored, searching */
   .dtag.err { background: #e5675c; }                /* download problem */
   @keyframes dl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+  /* Download progress bar along the poster's bottom edge. */
+  .dlbar { position: absolute; left: 7px; right: 7px; bottom: 7px; z-index: 2; height: 4px; border-radius: 999px;
+    background: rgba(0,0,0,.5); overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
+  .dlbar span { display: block; height: 100%; background: #2f7de1; border-radius: 999px; transition: width .6s ease; }
 
   /* Permanent status indicators (below the rank). Watchlist/seen are vivid;
      rewatch/unfinished use quieter, desaturated colours -- they're secondary. */
