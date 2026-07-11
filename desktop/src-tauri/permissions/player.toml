@@ -1,0 +1,14 @@
+# App-level command permissions. Tauri v2 does NOT auto-grant an app's own
+# #[tauri::command]s to a REMOTE-URL webview (only local content is implicitly
+# allowed), so the films.chrisj.uk window was blocked by the ACL. Declaring these
+# permissions and referencing them in the capability grants access.
+
+[[permission]]
+identifier = "allow-open-in-player"
+description = "Allow the films site to open a stream URL in the native player (mpv / OS default)."
+commands.allow = ["open_in_player"]
+
+[[permission]]
+identifier = "allow-player-info"
+description = "Allow the films site to read the device's player capabilities."
+commands.allow = ["player_info"]

@@ -1,7 +1,7 @@
 import { env } from '$env/dynamic/private';
-import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, pushRelease, manualImport, ensureMovie, RadarrError } from './radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, pushRelease, manualImport, ensureMovie, movieDownloadIds, RadarrError } from './radarrClient.js';
 import { searchProwlarr, prowlarrEnabled } from './prowlarr.js';
-import { qbEnabled, grabToQb, qbProgressForMovie, setImporter, startPump } from './qbittorrent.js';
+import { qbEnabled, grabToQb, qbProgressForMovie, qbTorrentsForMovie, exportTorrent, setImporter, startPump } from './qbittorrent.js';
 import { syncFilmDownloads } from './db.js';
 
 export { RadarrError };
@@ -132,28 +132,24 @@ export async function grabProwlarrRelease(imdbId, year, release) {
   }
 }
 
-// For the in-library "Download" menu: the best release's magnet (if any) + a
-// flag for whether a .torrent is fetchable. Uses Prowlarr; safe for the browser
-// (no API key). `title` is the film's title for the search query.
-export async function grabLinksFor(imdbId, year, title) {
-  if (!prowlarrEnabled()) return { magnet: null, hasTorrent: false };
+// For the in-library "Download" menu: the film's ACTUAL torrent(s) on the server
+// (in qBittorrent) — matched by our movie tag or by a Radarr download hash — each
+// with its full name + a magnet. Not a fresh indexer search.
+export async function serverTorrentsFor(imdbId) {
+  if (!qbEnabled()) return [];
+  const cfg = config();
+  let movieId = null, hashes = [];
   try {
-    const pick = bestByQuality(await searchProwlarr(title, year));
-    return { magnet: pick?.magnetUrl || null, hasTorrent: !!(pick?.downloadUrl || pick?.magnetUrl) };
-  } catch { return { magnet: null, hasTorrent: false }; }
+    const s = await radarrStatus(imdbId, cfg);
+    movieId = s?.movieId || null;
+    if (movieId) hashes = await movieDownloadIds(movieId, cfg);
+  } catch { /* Radarr optional; qB tag match still works */ }
+  return qbTorrentsForMovie(movieId, hashes);
 }
 
-// Fetch the best release's .torrent bytes SERVER-SIDE (the Prowlarr download URL
-// carries the API key, which must never reach the browser). Returns bytes or null.
-export async function torrentFor(imdbId, year, title) {
-  if (!prowlarrEnabled()) return null;
-  const pick = bestByQuality(await searchProwlarr(title, year));
-  if (!pick?.downloadUrl) return null;
-  try {
-    const r = await fetch(pick.downloadUrl);
-    if (!r.ok) return null;
-    return Buffer.from(await r.arrayBuffer());
-  } catch { return null; }
+// Export a specific torrent's .torrent bytes (+ name) from qBittorrent.
+export function exportTorrentFor(hash) {
+  return exportTorrent(hash);
 }
 
 // Resume the qBittorrent import pump (and wire its Radarr force-import) when the

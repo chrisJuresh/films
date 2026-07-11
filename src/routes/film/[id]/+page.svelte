@@ -30,6 +30,8 @@
   let playing = $state(false);        // inline browser player open
   let videoEl;
   let savedAt = 0;
+  let pbCleared = $state(false);      // user reset watch progress
+  let certsOpen = $state(false);      // age-rating breakdown expanded
   let releases = $state(null);        // interactive-search candidates (pick a release)
   let releasesLoading = $state(false);
   let grabbing = $state(null);        // guid of the release currently being grabbed
@@ -79,7 +81,7 @@
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
     grabbing = null; cancelling = false; releasesFallback = false; sortBy = 'quality'; watchMenu = false;
-    dlMenu = false; grabLinks = null;
+    dlMenu = false; grabLinks = null; pbCleared = false; certsOpen = false;
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
@@ -100,6 +102,8 @@
   let downloadIcon = $derived(downloadState === 'queued' || downloadState === 'available' ? 'check' : 'download');
   // Age ratings: freshest from live enrichment, else the queryable film_cert set.
   let certs = $derived((ready && meta?.certifications?.length) ? meta.certifications : (film.certs || []));
+  // Show one representative rating (prefer GB, then US); the rest expand on demand.
+  let primaryCert = $derived(certs.find((c) => c.country === 'GB') || certs.find((c) => c.country === 'US') || certs[0] || null);
 
   // Watch: in the Tauri desktop app, open natively (mpv, else the OS default);
   // in a plain browser, play in-browser via the iGPU stream.
@@ -143,9 +147,25 @@
     dlMenu = !dlMenu;
     if (dlMenu && !grabLinks) {
       try { grabLinks = await (await fetch(`/api/grab-links/${film.id_tspdt}`)).json(); }
-      catch { grabLinks = { hasTorrent: false, magnet: null }; }
+      catch { grabLinks = { torrents: [] }; }
     }
   }
+  const shortName = (n) => { const s = (n || '').replace(/\.(mkv|mp4|avi)$/i, ''); return s.length > 26 ? s.slice(0, 25) + '…' : s; };
+
+  // The Download button's state — reflects requested/downloading/importing even
+  // when the grab wasn't Radarr's top pick (e.g. a qB-direct grab). "Choose
+  // release" stays enabled as the manual override.
+  let dlBtn = $derived.by(() => {
+    if (downloadState === 'loading') return { label: 'Sending…', disabled: true, icon: 'sync', spin: true };
+    if (radarr?.queue) {
+      const p = radarr.queue.progress;
+      const importing = radarr.queue.state === 'importPending' || radarr.queue.state === 'importing';
+      return { label: importing ? 'Importing…' : `Downloading${p != null ? ' ' + p + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
+    }
+    if (radarr?.qb) return { label: radarr.qb.done ? 'Importing…' : `Downloading ${radarr.qb.progress}%…`, disabled: true, icon: 'sync', spin: true };
+    if ((radarr?.present && radarr?.monitored) || downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
+    return { label: 'Download', disabled: false, icon: 'download', spin: false };
+  });
   async function downloadFilm() {
     if (downloadState !== 'idle') return;
     downloadState = 'loading';
@@ -287,22 +307,39 @@
     playing = true;
     setTimeout(() => {
       const pos = data.film.playback?.position;
-      if (videoEl && pos > 5) videoEl.currentTime = pos;   // resume where you left off
+      if (videoEl && pos > 5 && !pbCleared && (!runtimeSec || pos < runtimeSec)) videoEl.currentTime = pos;   // resume where you left off
       videoEl?.play?.().catch(() => {});
     }, 60);
   }
   function onTimeUpdate() {
-    if (!videoEl) return;
+    // Only persist progress for a SEEKABLE source (an encoded copy or a directly
+    // playable file). A live iGPU transcode is a fragmented stream whose reported
+    // duration is bogus/grows as it buffers, which produced nonsense like "91%".
+    if (!videoEl || !watchInfo?.browser) return;
     const now = videoEl.currentTime;
     if (Math.abs(now - savedAt) < 5) return;               // throttle to ~5s
     savedAt = now;
+    const dur = Number.isFinite(videoEl.duration) && videoEl.duration > 0 ? videoEl.duration : null;
     fetch(`/api/playback/${film.id_tspdt}`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ position: now, duration: videoEl.duration || null })
+      body: JSON.stringify({ position: now, duration: dur })
     }).catch(() => {});
   }
-  let pb = $derived(data.film.playback);
-  let pbPercent = $derived(pb?.position && pb?.duration ? Math.min(100, Math.round((pb.position / pb.duration) * 100)) : null);
+  async function resetProgress() {
+    pbCleared = true;
+    try { await fetch(`/api/playback/${film.id_tspdt}`, { method: 'DELETE' }); } catch { /* best-effort */ }
+  }
+  // Base the % on the film's real runtime (reliable) rather than the stream's
+  // reported duration; hide implausible values outright.
+  let runtimeSec = $derived((((ready && meta.runtime) || film.length_min || 0) * 60) || null);
+  let pbPercent = $derived.by(() => {
+    if (pbCleared) return null;
+    const pos = data.film.playback?.position;
+    if (!pos || pos < 30) return null;
+    const dur = runtimeSec || data.film.playback?.duration;
+    if (!dur || dur < 300 || pos > dur * 1.05) return null;
+    return Math.min(100, Math.round((pos / dur) * 100));
+  });
 
   const money = (n) => (n ? '$' + Number(n).toLocaleString() : null);
   let director = $derived((ready && meta.directors?.length ? meta.directors.join(', ') : film.director));
@@ -331,7 +368,11 @@
       {#if ready && meta.tagline}<p class="tagline">“{meta.tagline}”</p>{/if}
       <div class="sub">{film.year ?? ''}{director ? ' · directed by ' + director : ''}</div>
       {#if pbPercent != null}
-        <div class="pbwrap"><div class="pb"><span style="width:{pbPercent}%"></span></div><span class="pblabel">Watched {pbPercent}%</span></div>
+        <div class="pbwrap">
+          <div class="pb"><span style="width:{pbPercent}%"></span></div>
+          <span class="pblabel">Watched {pbPercent}%</span>
+          <button class="pbreset" onclick={resetProgress} title="Reset watch progress"><Icon name="x" size={12} stroke={2.4} /></button>
+        </div>
       {/if}
 
       <div class="ratings">
@@ -350,8 +391,21 @@
         {#each genres as g}<span class="chip">{g}</span>{/each}
         {#if runtime}<span class="chip">{runtime} min</span>{/if}
         {#if film.colour && film.colour !== '---'}<span class="chip">{colourLabel(film.colour)}</span>{/if}
-        {#each certs as c}<span class="chip cert" title="Age rating · {c.country}">{c.country} {c.cert}</span>{/each}
       </div>
+
+      {#if certs.length}
+        <div class="certs">
+          <span class="cert-badge" title="Age rating · {primaryCert.country}">{primaryCert.country} · {primaryCert.cert}</span>
+          {#if certs.length > 1}
+            <button class="cert-more" onclick={() => certsOpen = !certsOpen} aria-expanded={certsOpen}>{certsOpen ? 'Hide' : `+${certs.length - 1} more`}</button>
+          {/if}
+          {#if certsOpen}
+            <div class="cert-grid">
+              {#each certs as c}<span class="cert-item"><b>{c.country}</b> {c.cert}</span>{/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="cta">
         <div class="watch-split" class:has-caret={watchOptions.length > 1} bind:this={splitEl}>
@@ -377,16 +431,23 @@
             <button class="btn caret" aria-label="Download options" aria-expanded={dlMenu} onclick={openDlMenu}><Icon name="chevron" size={15} /></button>
             {#if dlMenu}
               <div class="watch-menu" role="menu">
-                <a class="wm-item" href="/api/file/{film.id_tspdt}" download onclick={() => dlMenu = false}><Icon name="download" size={14} /> Download file</a>
-                {#if grabLinks?.hasTorrent}<a class="wm-item" href="/api/file/{film.id_tspdt}/torrent" download onclick={() => dlMenu = false}><Icon name="torrent" size={14} /> Save .torrent</a>{/if}
-                {#if grabLinks?.magnet}<a class="wm-item" href={grabLinks.magnet} onclick={() => dlMenu = false}><Icon name="magnet" size={14} /> Open magnet link</a>{/if}
-                {#if grabLinks && !grabLinks.hasTorrent && !grabLinks.magnet}<div class="wm-empty">No torrent/magnet found</div>{/if}
-                {#if !grabLinks}<div class="wm-empty">Looking up sources…</div>{/if}
+                <a class="wm-item" href="/api/file/{film.id_tspdt}" download onclick={() => dlMenu = false}><Icon name="download" size={14} /> Download file (best encode)</a>
+                {#if grabLinks?.torrents?.length}
+                  {@const many = grabLinks.torrents.length > 1}
+                  {#each grabLinks.torrents as t}
+                    <a class="wm-item" href="/api/file/{film.id_tspdt}/torrent?hash={t.hash}" download onclick={() => dlMenu = false} title={t.name}><Icon name="torrent" size={14} /> .torrent{many ? ' · ' + shortName(t.name) : ''}</a>
+                    <a class="wm-item" href={t.magnet} onclick={() => dlMenu = false} title={t.name}><Icon name="magnet" size={14} /> Magnet{many ? ' · ' + shortName(t.name) : ''}</a>
+                  {/each}
+                {:else if grabLinks}
+                  <div class="wm-empty">No torrent on the server for this film</div>
+                {:else}
+                  <div class="wm-empty">Looking up torrents…</div>
+                {/if}
               </div>
             {/if}
           </div>
         {:else}
-          <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadState === 'loading' ? 'sync' : downloadIcon} size={16} spin={downloadState === 'loading'} /> {downloadLabel}</button>
+          <button class="btn" onclick={downloadFilm} disabled={dlBtn.disabled} aria-busy={dlBtn.spin}><Icon name={dlBtn.icon} size={16} spin={dlBtn.spin} /> {dlBtn.label}</button>
         {/if}
         <button class="btn" onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
@@ -587,7 +648,18 @@
   .chip { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface-2); color: var(--muted); }
   .chip.rank { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
-  .chip.cert { border-color: var(--border-strong); color: var(--text); font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+
+  /* Age ratings: one representative badge + an expandable breakdown, instead of
+     a wall of per-country pills. */
+  .certs { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -12px 0 22px; }
+  .cert-badge { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 7px; letter-spacing: .02em;
+    border: 1px solid var(--border-strong); color: var(--text); font-variant-numeric: tabular-nums; }
+  .cert-more { font-size: 12px; color: var(--muted); background: none; border: 0; cursor: pointer; padding: 2px 4px;
+    text-decoration: underline; text-underline-offset: 2px; }
+  .cert-more:hover { color: var(--text); }
+  .cert-grid { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+  .cert-item { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cert-item b { color: var(--faint); font-weight: 600; margin-right: 4px; }
 
   .cta { display: flex; gap: 12px; flex-wrap: wrap; }
   .btn { padding: 13px 22px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2);
@@ -633,6 +705,9 @@
   .pb { flex: 1; height: 5px; border-radius: 999px; background: var(--surface-2); overflow: hidden; max-width: 320px; }
   .pb span { display: block; height: 100%; background: var(--free); border-radius: 999px; }
   .pblabel { font-size: 11.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .pbreset { display: inline-grid; place-items: center; width: 20px; height: 20px; padding: 0; border-radius: 999px;
+    border: 1px solid var(--border); background: transparent; color: var(--faint); cursor: pointer; transition: all .12s; }
+  .pbreset:hover { color: var(--text); border-color: var(--border-strong); }
 
   .play { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 14px; }
   .enc { display: flex; flex-direction: column; gap: 5px; min-width: 200px; font-size: 12.5px; color: var(--muted); }

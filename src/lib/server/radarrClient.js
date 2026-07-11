@@ -118,6 +118,22 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   return { status: 'queued', title: added?.title || lookup.title, radarrId: added?.id, alreadyAdded: false, yearMismatch };
 }
 
+/** The download-client hashes (downloadId) associated with a movie, from
+ *  Radarr's queue + history — so we can find the film's actual torrent(s) in the
+ *  download client even for Radarr-grabbed downloads. */
+export async function movieDownloadIds(movieId, settings, fetchImpl = globalThis.fetch) {
+  const ids = new Set();
+  try {
+    const q = await requestRadarr(settings, `queue/details?movieIds=${movieId}`, {}, fetchImpl);
+    for (const it of (Array.isArray(q) ? q : [])) if (it.movieId === movieId && it.downloadId) ids.add(String(it.downloadId).toLowerCase());
+  } catch { /* optional */ }
+  try {
+    const h = await requestRadarr(settings, `history/movie?movieId=${movieId}`, {}, fetchImpl);
+    for (const e of (Array.isArray(h) ? h : [])) if (e.downloadId) ids.add(String(e.downloadId).toLowerCase());
+  } catch { /* optional */ }
+  return [...ids];
+}
+
 /** Ensure the film exists in Radarr (added monitored, no auto-search) and return
  *  its movie id. Used by the qBittorrent-direct path, which needs the id to
  *  force-import into. */

@@ -1,20 +1,18 @@
 import { error } from '@sveltejs/kit';
-import { getFilmBasic } from '$lib/server/db.js';
-import { torrentFor } from '$lib/server/radarr.js';
+import { exportTorrentFor } from '$lib/server/radarr.js';
 
-// Stream a .torrent for this film (best Prowlarr release). The Prowlarr download
-// URL — which carries the API key — is fetched server-side; only the .torrent
-// bytes reach the browser.
-export async function GET({ params }) {
-  const id = Number(params.id);
-  const film = id > 0 ? getFilmBasic(id) : null;
-  if (!film?.imdb_id) throw error(404, 'Film not found.');
-  const bytes = await torrentFor(film.imdb_id, film.year, film.title);
-  if (!bytes) throw error(404, 'No .torrent available for this film.');
-  return new Response(bytes, {
+// Download the .torrent for one of the film's server-side torrents (qBittorrent),
+// named after the full torrent. `hash` identifies which one.
+export async function GET({ url }) {
+  const hash = url.searchParams.get('hash');
+  if (!hash) throw error(400, 'A torrent hash is required.');
+  const t = await exportTorrentFor(hash);
+  if (!t?.bytes) throw error(404, 'That torrent is no longer on the server.');
+  const fname = (t.name || hash).replace(/[/\\"\n\r]/g, '').slice(0, 150) + '.torrent';
+  return new Response(t.bytes, {
     headers: {
       'Content-Type': 'application/x-bittorrent',
-      'Content-Disposition': `attachment; filename="film-${id}.torrent"`
+      'Content-Disposition': `attachment; filename="${fname}"`
     }
   });
 }

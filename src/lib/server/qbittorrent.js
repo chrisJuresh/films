@@ -67,6 +67,40 @@ export async function qbProgressForMovie(movieId) {
   } catch { _cookie = null; return null; }
 }
 
+const tagList = (tags) => (tags || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/** The film's actual torrent(s) in qBittorrent — matched by our movie tag OR by
+ *  a Radarr download hash. Returns [{ hash, name, magnet }]. */
+export async function qbTorrentsForMovie(movieId, hashes = []) {
+  const cfg = config();
+  if (!cfg) return [];
+  const want = new Set((hashes || []).map((h) => String(h).toLowerCase()));
+  const tag = movieId ? movieTag(movieId) : null;
+  try {
+    const c = await cookie(cfg);
+    const all = await qb.listTorrents(cfg, {}, c, fetch);
+    return all
+      .filter((t) => (tag && tagList(t.tags).includes(tag)) || want.has(String(t.hash || '').toLowerCase()))
+      .map((t) => ({ hash: t.hash, name: t.name, magnet: `magnet:?xt=urn:btih:${t.hash}&dn=${encodeURIComponent(t.name || '')}` }));
+  } catch { _cookie = null; return []; }
+}
+
+/** Export a torrent's .torrent bytes from qBittorrent, with its name. */
+export async function exportTorrent(hash) {
+  const cfg = config();
+  if (!cfg) return null;
+  try {
+    const c = await cookie(cfg);
+    const info = await qb.listTorrents(cfg, {}, c, fetch);
+    const t = info.find((x) => String(x.hash || '').toLowerCase() === String(hash).toLowerCase());
+    const r = await fetch(new URL(`api/v2/torrents/export?hash=${encodeURIComponent(hash)}`, cfg.baseUrl), {
+      headers: { Cookie: c, Referer: cfg.baseUrl.origin }
+    });
+    if (!r.ok) return null;
+    return { bytes: Buffer.from(await r.arrayBuffer()), name: t?.name || String(hash) };
+  } catch { _cookie = null; return null; }
+}
+
 // radarr.js injects the Radarr force-import so this module doesn't depend on it.
 let _importFn = null;
 export function setImporter(fn) { _importFn = fn; }

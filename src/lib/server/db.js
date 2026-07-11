@@ -376,6 +376,9 @@ export function setPlayback(user, id, position, duration) {
 export function getPlayback(user, id) {
   return getDb().prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, id) || null;
 }
+export function clearPlayback(user, id) {
+  getDb().prepare('DELETE FROM playback WHERE cf_user=? AND id_tspdt=?').run(user, id);
+}
 
 /* ---------------------------------------------- Radarr download state ---- */
 // Replace film_download with a fresh snapshot mapping our films to Radarr's
