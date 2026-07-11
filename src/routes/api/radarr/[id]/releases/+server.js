@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { getFilmBasic } from '$lib/server/db.js';
-import { getReleases, grabReleaseFor, pushReleaseFor, RadarrError } from '$lib/server/radarr.js';
+import { getReleases, grabReleaseFor, grabProwlarrRelease, RadarrError } from '$lib/server/radarr.js';
 
 // GET: interactive search (Radarr, with a Prowlarr year-fallback) → candidates.
 // POST: grab one — a Radarr release by {guid, indexerId}, or a Prowlarr release
@@ -16,11 +16,14 @@ export async function GET({ params }) {
   }
 }
 
-export async function POST({ request }) {
+export async function POST({ params, request }) {
   const body = await request.json().catch(() => ({}));
   try {
     if (body.source === 'prowlarr') {
-      return json(await pushReleaseFor(body));
+      const id = Number(params.id);
+      const film = id > 0 ? getFilmBasic(id) : null;
+      if (!film?.imdb_id) throw error(404, 'Film not found.');
+      return json(await grabProwlarrRelease(film.imdb_id, film.year, body));
     }
     if (!body.guid) throw error(400, 'A release guid is required.');
     return json(await grabReleaseFor(body.guid, body.indexerId));

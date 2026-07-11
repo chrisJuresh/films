@@ -148,6 +148,8 @@
       downloadState = result.status === 'available' ? 'available' : 'queued';
       if (downloadState === 'available') {
         toast(`“${title}” is already downloaded in Radarr.`, 'info', 4200);
+      } else if (result.via === 'qbittorrent') {
+        toast(`Radarr couldn’t match “${title}”, so it’s downloading via qBittorrent — it’ll import automatically when done.`, 'ok', 7000);
       } else if (result.via === 'prowlarr') {
         toast(`Radarr couldn’t find “${title}” on its year — grabbed a Prowlarr release instead.`, 'ok', 5400);
       } else if (result.grabFailed) {
@@ -201,7 +203,7 @@
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d?.message || 'Grab failed.');
-      toast('Grabbing that release…', 'ok');
+      toast(d?.via === 'qbittorrent' ? 'Radarr couldn’t match it — downloading via qBittorrent, will import automatically.' : 'Grabbing that release…', 'ok', d?.via === 'qbittorrent' ? 6500 : 3200);
       releases = null; downloadState = 'queued';
       loadRadarr(film.id_tspdt); loadWatch(film.id_tspdt);
     } catch (e) { toast(e.message || 'Could not grab that release.', 'error', 4600); }
@@ -397,6 +399,13 @@
               <span class="rr-sub">{[radarr.quality, radarr.resolution, radarr.videoCodec, gb(radarr.sizeOnDisk)].filter(Boolean).join(' · ')}</span>
             </div>
             {#if radarr.releaseGroup}<div class="rr-meta">Release group · {radarr.releaseGroup}</div>{/if}
+          {:else if radarr.qb}
+            <div class="rr-row">
+              <span class="rr-label">{radarr.qb.done ? 'Importing' : 'Downloading'} · qBittorrent</span>
+              <span class="rr-sub">{radarr.qb.progress}%{radarr.qb.eta ? ' · ~' + Math.round(radarr.qb.eta / 60) + 'm left' : ''}</span>
+            </div>
+            <div class="rr-bar"><span style="width:{radarr.qb.progress}%"></span></div>
+            <div class="rr-meta">{radarr.qb.done ? 'Downloaded — importing into Radarr…' : 'Direct download (Radarr couldn’t match the title); imports automatically when done.'}</div>
           {:else}
             <div class="rr-row">
               <span class="rr-label">In Radarr</span>

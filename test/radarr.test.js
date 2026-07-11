@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { downloadWithRadarrClient, radarrStatus, searchReleases, grabRelease, pushRelease, RadarrError } from '../src/lib/server/radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, searchReleases, grabRelease, pushRelease, manualImport, RadarrError } from '../src/lib/server/radarrClient.js';
 
 const settings = () => ({
   baseUrl: new URL('http://radarr:7878/radarr/'),
@@ -253,6 +253,26 @@ test('pushRelease falls back to the magnet link and rejects a linkless release',
     pushRelease({ title: 'no link' }, settings(), async () => { throw new Error('should not fetch'); }),
     (e) => e instanceof RadarrError && e.status === 400
   );
+});
+
+test('manualImport force-imports the largest file into the given movie', async () => {
+  const mock = mockFetch(
+    jsonResponse([
+      { path: '/data/torrents/x/sample.mkv', size: 1e7, quality: { quality: { name: 'Unknown' } }, languages: [{ id: 1, name: 'English' }] },
+      { path: '/data/torrents/x/movie.mkv', size: 8e9, quality: { quality: { name: 'Bluray-1080p' } }, languages: [{ id: 2, name: 'French' }] }
+    ]),
+    jsonResponse({ id: 5, name: 'ManualImport' })
+  );
+  const r = await manualImport(18, '/data/torrents/x', settings(), mock.fetch);
+  assert.equal(r.imported, '/data/torrents/x/movie.mkv');            // largest, not the sample
+  assert.equal(mock.calls[0].url.pathname, '/radarr/api/v3/manualimport');
+  assert.equal(mock.calls[0].url.searchParams.get('folder'), '/data/torrents/x');
+  assert.equal(mock.calls[1].url.pathname, '/radarr/api/v3/command');
+  const cmd = JSON.parse(mock.calls[1].options.body);
+  assert.equal(cmd.name, 'ManualImport');
+  assert.equal(cmd.importMode, 'copy');            // keep the torrent seeding
+  assert.equal(cmd.files[0].movieId, 18);
+  assert.equal(cmd.files[0].path, '/data/torrents/x/movie.mkv');
 });
 
 test('does not expose Radarr validation details to the browser-facing error', async () => {

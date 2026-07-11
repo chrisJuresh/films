@@ -118,6 +118,23 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   return { status: 'queued', title: added?.title || lookup.title, radarrId: added?.id, alreadyAdded: false, yearMismatch };
 }
 
+/** Ensure the film exists in Radarr (added monitored, no auto-search) and return
+ *  its movie id. Used by the qBittorrent-direct path, which needs the id to
+ *  force-import into. */
+export async function ensureMovie(imdbId, settings, fetchImpl = globalThis.fetch) {
+  if (!/^tt\d{7,10}$/i.test(imdbId || '')) throw new RadarrError('This film has no usable IMDb ID.', 422);
+  const lookup = await requestRadarr(settings, `movie/lookup/imdb?imdbId=${encodeURIComponent(imdbId)}`, {}, fetchImpl);
+  if (!lookup?.tmdbId) throw new RadarrError('Radarr could not find this film.', 422);
+  const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
+  const movie = Array.isArray(existing) ? existing[0] : null;
+  if (movie?.id) return movie.id;
+  const added = await requestRadarr(settings, 'movie', { method: 'POST', body: {
+    ...lookup, qualityProfileId: settings.qualityProfileId, rootFolderPath: settings.rootFolderPath,
+    monitored: true, minimumAvailability: 'released', addOptions: { ...(lookup.addOptions || {}), searchForMovie: false }
+  } }, fetchImpl);
+  return added?.id;
+}
+
 /** Cancel any in-progress download for a film (removes it from Radarr's queue
  *  and the download client). For "I changed my mind after clicking Download." */
 export async function cancelDownload(imdbId, settings, fetchImpl = globalThis.fetch) {
@@ -234,6 +251,40 @@ export async function pushRelease(release, settings, fetchImpl = globalThis.fetc
   return { grabbed: true };
 }
 
+/** Force-import a completed download into a SPECIFIC movie, bypassing Radarr's
+ *  title parsing (which fails for names like "…1080 Bruxelles…"). `path` is the
+ *  download's content path as Radarr sees it (same /data mount as qBittorrent).
+ *  Used by the qBittorrent-direct pipeline. */
+export async function manualImport(movieId, contentPath, settings, fetchImpl = globalThis.fetch) {
+  const scan = async (folder) => {
+    const c = await requestRadarr(settings, `manualimport?folder=${encodeURIComponent(folder)}&filterExistingFiles=false`, {}, fetchImpl);
+    return (Array.isArray(c) ? c : []).filter((x) => x.path && Number(x.size) > 0);
+  };
+  // content_path may be a folder (multi-file torrent) or a single file. Scan it
+  // directly; if that yields nothing (a lone file), scan the parent but keep ONLY
+  // that file, so we never import a sibling download from a shared folder.
+  let files = await scan(contentPath);
+  if (!files.length) {
+    const cut = contentPath.replace(/\/+$/, '').lastIndexOf('/');
+    const parent = cut > 0 ? contentPath.slice(0, cut) : contentPath;
+    const base = contentPath.slice(cut + 1);
+    files = (await scan(parent)).filter((f) => f.path === contentPath || f.path?.endsWith('/' + base));
+  }
+  if (!files.length) throw new RadarrError('No importable file found in the download.', 422);
+  const f = files.sort((a, b) => Number(b.size) - Number(a.size))[0];   // the feature, not samples
+  // 'copy' (Radarr hardlinks on the same filesystem) so the torrent keeps seeding.
+  await requestRadarr(settings, 'command', { method: 'POST', body: {
+    name: 'ManualImport', importMode: 'copy',
+    files: [{
+      path: f.path, movieId,
+      quality: f.quality || { quality: { id: 0, name: 'Unknown' } },
+      languages: f.languages || [{ id: 0, name: 'Unknown' }],
+      releaseGroup: f.releaseGroup || ''
+    }]
+  } }, fetchImpl);
+  return { imported: f.path };
+}
+
 /** Server-side only: the film's actual file path + codecs (for transcoding).
  *  Never sent to the browser. Returns null if Radarr has no file. */
 export async function movieFileInfo(imdbId, settings, fetchImpl = globalThis.fetch) {
@@ -293,6 +344,7 @@ export async function radarrStatus(imdbId, settings, fetchImpl = globalThis.fetc
   const mf = movie.movieFile;
   return {
     present: true,
+    movieId: movie.id,
     monitored: !!movie.monitored,
     hasFile: !!movie.hasFile,
     movieStatus: movie.status || null,                             // announced | inCinemas | released

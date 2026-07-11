@@ -1,6 +1,7 @@
 import { env } from '$env/dynamic/private';
-import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, pushRelease, RadarrError } from './radarrClient.js';
+import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, pushRelease, manualImport, ensureMovie, RadarrError } from './radarrClient.js';
 import { searchProwlarr, prowlarrEnabled } from './prowlarr.js';
+import { qbEnabled, grabToQb, qbProgressForMovie, setImporter, startPump } from './qbittorrent.js';
 import { syncFilmDownloads } from './db.js';
 
 export { RadarrError };
@@ -63,14 +64,27 @@ export async function downloadWithRadarr(imdbId, year) {
     await pushRelease(pick, cfg);
     return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'prowlarr', grabbed: pick.title };
   } catch (e) {
-    // Found releases on Prowlarr but Radarr couldn't auto-grab one (e.g. a title
-    // its parser mis-reads). Surface that honestly instead of a silent "Missing".
+    // Radarr couldn't map the release title. Last resort: add it to qBittorrent
+    // directly and force-import it into Radarr by movie id once it finishes.
+    if (qbEnabled() && res.radarrId) {
+      try {
+        await grabToQb(pick, res.radarrId);
+        return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'qbittorrent', grabbed: pick.title };
+      } catch (qe) {
+        return { ...res, prowlarrFound: pw.length, grabFailed: qe?.message || e?.message };
+      }
+    }
     return { ...res, prowlarrFound: pw.length, grabFailed: e?.message || 'Radarr could not grab the release.' };
   }
 }
 
-export function getRadarrStatus(imdbId) {
-  return radarrStatus(imdbId, config());
+export async function getRadarrStatus(imdbId) {
+  const s = await radarrStatus(imdbId, config());
+  // qB-direct downloads aren't in Radarr's queue, so surface their progress too.
+  if (s?.present && !s.hasFile && !s.queue && s.movieId && qbEnabled()) {
+    try { const q = await qbProgressForMovie(s.movieId); if (q) s.qb = q; } catch { /* best-effort */ }
+  }
+  return s;
 }
 
 export function getMovieFileInfo(imdbId) {
@@ -102,9 +116,27 @@ export function grabReleaseFor(guid, indexerId) {
   return grabRelease(guid, indexerId, config());
 }
 
-// Grab a Prowlarr-sourced release by pushing it into Radarr's pipeline.
-export function pushReleaseFor(release) {
-  return pushRelease(release, config());
+// Grab a Prowlarr-sourced release: push it through Radarr if it can map the
+// title, else fall back to qBittorrent-direct + forced import (for titles the
+// parser can't handle). `imdbId`/`year` locate the movie for the qB path.
+export async function grabProwlarrRelease(imdbId, year, release) {
+  const cfg = config();
+  try {
+    await pushRelease(release, cfg);
+    return { grabbed: true, via: 'radarr' };
+  } catch (e) {
+    if (!qbEnabled()) throw e;
+    const movieId = await ensureMovie(imdbId, cfg);
+    await grabToQb(release, movieId);
+    return { grabbed: true, via: 'qbittorrent' };
+  }
+}
+
+// Resume the qBittorrent import pump (and wire its Radarr force-import) when the
+// module loads, so completed downloads still import after a server restart.
+if (qbEnabled()) {
+  setImporter((movieId, path) => manualImport(movieId, path, config()));
+  startPump();
 }
 
 // Refresh the film_download snapshot from Radarr's library, at most every 45s.

@@ -43,6 +43,14 @@ services:
       # (URL defaults to Prowlarr's in-stack address + /prowlarr URL base).
       - PROWLARR_URL=${PROWLARR_URL:-http://prowlarr:9696}
       - PROWLARR_API_KEY=${PROWLARR_API_KEY:-}
+      # Optional qBittorrent-direct fallback. Some film titles defeat Radarr's
+      # parser (e.g. "…1080 Bruxelles…"), so Radarr can't match/grab any release.
+      # When set, those go straight to qB and are force-imported into Radarr by
+      # movie id once complete. qB and Radarr share the /mnt/bay3 -> /data mount,
+      # so the finished path is importable as-is.
+      - QBITTORRENT_URL=${QBITTORRENT_URL:-http://qbittorrent:8081}
+      - QBITTORRENT_USER=${QBITTORRENT_USER:-}
+      - QBITTORRENT_PASS=${QBITTORRENT_PASS:-}
       # iGPU transcoding (encode/stream via VAAPI). ENCODE_DIR lives under the
       # /srv/films mount so encoded copies persist. MEDIA_ROOTS are searched to
       # turn a Radarr file path into a path this container can read (auto-picks
