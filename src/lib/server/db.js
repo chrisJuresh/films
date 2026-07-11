@@ -93,6 +93,14 @@ function getDb() {
       progress INTEGER                   -- 0-100 while downloading, else null
     );
     CREATE INDEX IF NOT EXISTS film_download_state ON film_download(state);
+    CREATE TABLE IF NOT EXISTS lb_unmatched (
+      cf_user     TEXT NOT NULL,
+      name        TEXT NOT NULL,
+      year        TEXT NOT NULL DEFAULT '',   -- '' when the CSV had no year
+      lb_date     TEXT,
+      imported_at TEXT DEFAULT (datetime('now')),
+      PRIMARY KEY (cf_user, name, year)
+    );
   `);
   // Migration for DBs created before film_download had a progress column.
   try { db.exec('ALTER TABLE film_download ADD COLUMN progress INTEGER'); } catch { /* already present */ }
@@ -480,12 +488,22 @@ export function importLetterboxd(user, rows) {
     `INSERT INTO lb_seen(cf_user, id_tspdt, state, lb_date, imported_at, updated_at)
      VALUES(?,?,'watched',?,datetime('now'),datetime('now'))`
   );
+  // Persist rows that matched nothing so the reconciliation page can always show
+  // them; a row that matches on a later import is dropped from this list.
+  const insU = db.prepare(
+    `INSERT INTO lb_unmatched(cf_user, name, year, lb_date, imported_at)
+     VALUES(?,?,?,?,datetime('now'))
+     ON CONFLICT(cf_user, name, year) DO UPDATE SET lb_date=excluded.lb_date`
+  );
+  const delU = db.prepare('DELETE FROM lb_unmatched WHERE cf_user=? AND name=? AND year=?');
   let matched = 0, added = 0, already = 0; const unmatched = [];
   db.exec('BEGIN');
   try {
     for (const r of rows) {
+      const yr = String(r.year || '');
       const id = matchFilm(idx, r.name, r.year);
-      if (!id) { unmatched.push({ name: r.name, year: r.year }); continue; }
+      if (!id) { insU.run(user, r.name, yr, r.date || null); unmatched.push({ name: r.name, year: r.year }); continue; }
+      delU.run(user, r.name, yr);   // it matches now — no longer "not found"
       matched++;
       if (has.get(user, id)) { already++; continue; }
       ins.run(user, id, r.date || null);
@@ -512,5 +530,16 @@ export function reconciliation(user) {
      WHERE lb.cf_user = ? AND lb.state = 'unwatched'
      ORDER BY f.latest_rank`
   ).all(user);
-  return { onlySite, lbRemoved };
+  const unmatched = db.prepare(
+    `SELECT name, year, lb_date FROM lb_unmatched WHERE cf_user = ? ORDER BY name COLLATE NOCASE`
+  ).all(user);
+  return { onlySite, lbRemoved, unmatched };
+}
+
+// Remove a single "not found" entry, or clear the whole list for a user.
+export function dismissUnmatched(user, name, year) {
+  getDb().prepare('DELETE FROM lb_unmatched WHERE cf_user=? AND name=? AND year=?').run(user, name, String(year ?? ''));
+}
+export function clearUnmatched(user) {
+  getDb().prepare('DELETE FROM lb_unmatched WHERE cf_user=?').run(user);
 }

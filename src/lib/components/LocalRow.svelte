@@ -18,17 +18,30 @@
     fetch(`/api/meta/${id}?level=light`).then((r) => r.json()).then((m) => { if (m?.poster) poster = m.poster; }).catch(() => {});
   });
 
+  async function resolvePath() {
+    const core = window.__TAURI__?.core;
+    const p = path || (await core?.invoke('local_file', { id }));
+    if (!p) throw new Error('The saved file has gone missing.');
+    return p;
+  }
   async function play(e) {
     e.preventDefault(); e.stopPropagation();
     if (busy) return;
     busy = true;
     try {
-      const core = window.__TAURI__?.core;
-      let p = path || (await core?.invoke('local_file', { id }));
-      if (!p) throw new Error('The saved file has gone missing.');
-      await core.invoke('open_in_player', { url: p, prefer: 'mpv' });
+      await window.__TAURI__.core.invoke('open_in_player', { url: await resolvePath(), prefer: 'mpv' });
     } catch (err) {
       toast(err?.message || 'Could not open it in mpv.', 'error');
+    } finally { busy = false; }
+  }
+  async function reveal(e) {
+    e.preventDefault(); e.stopPropagation();
+    if (busy) return;
+    busy = true;
+    try {
+      await window.__TAURI__.core.invoke('reveal_file', { path: await resolvePath() });
+    } catch (err) {
+      toast(err?.message || 'Could not open the folder.', 'error');
     } finally { busy = false; }
   }
 </script>
@@ -53,6 +66,9 @@
       <span class="tag err" title={error}><Icon name="alert" size={13} stroke={2.2} /> retry on film page</span>
       <span class="go" aria-hidden="true"><Icon name="chevron" size={16} /></span>
     {:else}
+      <button class="icon-btn" onclick={reveal} disabled={busy} aria-label="Show in folder" title="Show in folder">
+        <Icon name="folder" size={15} />
+      </button>
       <button class="play" onclick={play} disabled={busy} title="Play the saved copy in mpv">
         <Icon name="play" size={13} stroke={2.2} /> mpv
       </button>
@@ -85,6 +101,10 @@
     color: var(--text); cursor: pointer; transition: all .14s; }
   .play:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .play:disabled { opacity: .5; cursor: default; }
+  .icon-btn { width: 32px; height: 32px; flex: none; border-radius: 999px; display: grid; place-items: center;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: pointer; transition: all .14s; }
+  .icon-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+  .icon-btn:disabled { opacity: .5; cursor: default; }
   .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
     padding: 4px 9px; border-radius: 999px; white-space: nowrap; color: #e5675c;
     background: color-mix(in srgb, #e5675c 15%, transparent); }

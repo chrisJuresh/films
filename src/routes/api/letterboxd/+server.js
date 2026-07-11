@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import zlib from 'node:zlib';
-import { importLetterboxd } from '$lib/server/db.js';
+import { importLetterboxd, dismissUnmatched, clearUnmatched } from '$lib/server/db.js';
 
 // Extract a single entry (by basename) from a zip buffer using its central
 // directory. Zero-dependency: only node:zlib (inflateRaw) is needed for the
@@ -85,4 +85,13 @@ export async function POST({ request, locals }) {
   const rows = parseWatched(csv);
   if (!rows.length) throw error(400, 'No rows found. Expected a letterboxd watched.csv (Date, Name, Year, Letterboxd URI).');
   return json(importLetterboxd(locals.user, rows));
+}
+
+// Prune the persistent "not found in the catalogue" list: one entry, or all.
+export async function DELETE({ request, locals }) {
+  const body = await request.json().catch(() => ({}));
+  if (body?.all) clearUnmatched(locals.user);
+  else if (body?.name != null) dismissUnmatched(locals.user, body.name, body.year);
+  else throw error(400, 'Nothing to remove.');
+  return json({ ok: true });
 }

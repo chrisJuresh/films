@@ -27,6 +27,7 @@
     monitor:   '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/>',
     torrent:   '<circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/>',
     magnet:    '<path d="M6 4v7a6 6 0 0 0 12 0V4"/><path d="M6 4H2.5M18 4h3.5M6 8H2.5M18 8h3.5"/>',
+    folder:    '<path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   };
 </script>
 

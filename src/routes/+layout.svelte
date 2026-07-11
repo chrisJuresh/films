@@ -294,4 +294,21 @@
   </div>
 </div>
 
+<!-- Film pages hide the sidebar (and its update pill), so surface updates here too. -->
+{#if onFilm && isTauri && update?.available}
+  <button class="update-fab" onclick={openRelease} title="Download and install v{update.latest}">
+    <Icon name="download" size={16} /> Update to v{update.latest}
+  </button>
+{/if}
+
 <Toast />
+
+<style>
+  /* Floating update prompt for film pages (the sidebar's pill isn't shown there). */
+  .update-fab { position: fixed; left: 18px; bottom: 18px; z-index: 150; display: inline-flex;
+    align-items: center; gap: 8px; padding: 11px 16px; border-radius: 999px; border: none; cursor: pointer;
+    background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 13.5px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+  .update-fab:hover { filter: brightness(1.07); }
+  @media (max-width: 820px) { .update-fab { left: 12px; bottom: 12px; } }
+</style>

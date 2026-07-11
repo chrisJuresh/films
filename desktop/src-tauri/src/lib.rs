@@ -269,6 +269,50 @@ fn local_downloads(app: AppHandle) -> Vec<LocalDl> {
     out
 }
 
+/// Open the OS file manager at a saved file (selecting it) or a folder.
+/// Windows: explorer /select; macOS: open -R; Linux: xdg-open the directory.
+fn show_in_manager(path: &std::path::Path, select: bool) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = std::process::Command::new("explorer");
+        if select { c.arg(format!("/select,{}", path.display())); } else { c.arg(path); }
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        c.spawn().map_err(|e| e.to_string())?; // explorer exits nonzero even on success; don't wait
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut c = std::process::Command::new("open");
+        if select { c.arg("-R"); }
+        c.arg(path);
+        c.spawn().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // xdg-open can't select a file, so open the containing directory.
+        let target = if select { path.parent().unwrap_or(path) } else { path };
+        std::process::Command::new("xdg-open").arg(target).spawn().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[allow(unreachable_code)]
+    Err("Unsupported platform".into())
+}
+
+/// Reveal a specific saved film in the file manager.
+#[tauri::command]
+fn reveal_file(path: String) -> Result<(), String> {
+    show_in_manager(std::path::Path::new(&path), true)
+}
+
+/// Open the folder where "Save to PC" downloads live.
+#[tauri::command]
+fn open_downloads_dir(app: AppHandle) -> Result<(), String> {
+    let d = cache_dir(&app)?;
+    show_in_manager(&d, false)
+}
+
 #[derive(Serialize, Clone)]
 struct DlProgress {
     id: i64,
@@ -383,6 +427,8 @@ pub fn run() {
             check_update,
             local_file,
             local_downloads,
+            reveal_file,
+            open_downloads_dir,
             download_to_pc
         ])
         .run(tauri::generate_context!())

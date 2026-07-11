@@ -6,10 +6,15 @@
   import DownloadRow from '$lib/components/DownloadRow.svelte';
   import LocalRow from '$lib/components/LocalRow.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { downloads } from '$lib/stores.js';
+  import { downloads, toast } from '$lib/stores.js';
 
   let { data } = $props();
   const isTauri = browser && !!window.__TAURI__?.core?.invoke;
+
+  async function openDownloadsFolder() {
+    try { await window.__TAURI__.core.invoke('open_downloads_dir'); }
+    catch (e) { toast(e?.message || 'Could not open the folder (update the app to v0.1.9+).', 'error'); }
+  }
 
   /* ---- Radarr (server-side) downloads ----
      Counts come from the layout load (data.downloads); the four lists from this
@@ -115,7 +120,9 @@
   {:else}
     {#if hasLocal}
       <section>
-        <h2><Icon name="monitor" size={15} stroke={2} /> On this PC <span class="n">{localTotal}</span></h2>
+        <h2><Icon name="monitor" size={15} stroke={2} /> On this PC <span class="n">{localTotal}</span>
+          <button class="folder-btn" onclick={openDownloadsFolder} title="Open the downloads folder"><Icon name="folder" size={14} /> Folder</button>
+        </h2>
         <p class="hint">Your “Save to PC” copies — kept locally in the desktop app for offline mpv playback.</p>
         <div class="rows">
           {#each localSaving as x (x.id)}
@@ -205,6 +212,11 @@
   h2 :global(.icon) { color: var(--muted); }
   h2.e, h2.e :global(.icon) { color: #e5675c; }
   h2 .n { font-size: 13px; color: var(--faint); font-weight: 500; font-variant-numeric: tabular-nums; }
+  .folder-btn { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px;
+    font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--muted); cursor: pointer; transition: all .14s; }
+  .folder-btn:hover { color: var(--text); border-color: var(--border-strong); }
+  .folder-btn :global(.icon) { color: var(--accent); }
   .hint { color: var(--muted); font-size: 13px; margin: -4px 0 12px; }
   .hint a { color: var(--accent); text-decoration: none; }
   .hint a:hover { text-decoration: underline; }

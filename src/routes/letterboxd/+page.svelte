@@ -29,6 +29,20 @@
       if (fileInput) fileInput.value = '';
     }
   }
+
+  async function del(body, failMsg) {
+    try {
+      const r = await fetch('/api/letterboxd', {
+        method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+      });
+      if (!r.ok) throw new Error();
+      await invalidateAll();
+    } catch { toast(failMsg, 'error'); }
+  }
+  const dismiss = (u) => del({ name: u.name, year: u.year }, 'Could not remove that entry.');
+  function clearAllUnmatched() {
+    if (confirm('Clear the whole “not in the catalogue” list?')) del({ all: true }, 'Could not clear the list.');
+  }
 </script>
 
 <svelte:head><title>Letterboxd · Film Index</title></svelte:head>
@@ -55,13 +69,26 @@
       <div><b>{result.matched}</b> matched</div>
       <div><b>{result.unmatched.length}</b> not in catalogue</div>
     </div>
-    {#if result.unmatched.length}
-      <details class="unmatched">
-        <summary>{result.unmatched.length} titles didn't match (not in TSPDT, or a title/year difference)</summary>
-        <ul>{#each result.unmatched as u}<li>{u.name} <span>({u.year || '—'})</span></li>{/each}</ul>
-      </details>
-    {/if}
   {/if}
+
+  <section class="block">
+    <div class="bhead">
+      <h2>Not in the catalogue <span class="n">{data.unmatched.length}</span></h2>
+      {#if data.unmatched.length}<button class="clearbtn" onclick={clearAllUnmatched}>Clear all</button>{/if}
+    </div>
+    <p class="sub">Films from your Letterboxd imports that don't match any TSPDT title — not on the list, or a title/year difference. Kept here so you always know what didn't carry over.</p>
+    {#if data.unmatched.length}
+      <ul class="films">
+        {#each data.unmatched as u (u.name + '|' + u.year)}
+          <li class="um">
+            <span class="ti">{u.name}</span>
+            <span class="yr">{u.year || '—'}</span>
+            <button class="dismiss" onclick={() => dismiss(u)} title="Remove from this list" aria-label="Remove">✕</button>
+          </li>
+        {/each}
+      </ul>
+    {:else}<p class="empty">Nothing here — everything you've imported matched a catalogue film.</p>{/if}
+  </section>
 
   <section class="block">
     <h2>Watched here, not in Letterboxd <span class="n">{data.onlySite.length}</span></h2>
@@ -108,12 +135,19 @@
   .summary { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 20px; padding: 16px 18px;
     border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2); font-size: 14px; color: var(--muted); }
   .summary b { color: var(--text); font-variant-numeric: tabular-nums; font-size: 17px; margin-right: 4px; }
-  .unmatched { margin-top: 12px; font-size: 13.5px; color: var(--muted); }
-  .unmatched summary { cursor: pointer; }
-  .unmatched ul { margin: 8px 0 0; padding-left: 18px; columns: 2; }
-  .unmatched li span { color: var(--faint); }
-
   .block { margin-top: 38px; border-top: 1px solid var(--border); padding-top: 22px; }
+  .bhead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .clearbtn { flex: none; font-size: 12px; color: var(--muted); background: none; border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 11px; cursor: pointer; transition: all .12s; }
+  .clearbtn:hover { color: var(--text); border-color: var(--border-strong); }
+  .um { display: flex; align-items: center; gap: 12px; padding: 9px 10px; border-radius: 8px; font-size: 14px; }
+  .um:hover { background: var(--surface); }
+  .um .ti { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .um .yr { color: var(--faint); font-size: 12px; flex: none; }
+  .dismiss { flex: none; width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--faint); cursor: pointer; font-size: 11px; line-height: 1;
+    display: grid; place-items: center; transition: all .12s; }
+  .dismiss:hover { color: #fff; background: #e5675c; border-color: #e5675c; }
   h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; display: flex; align-items: center; gap: 10px; }
   h2 .n { font-size: 12px; font-weight: 700; color: var(--accent); background: var(--surface-2);
     border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; font-variant-numeric: tabular-nums; }
@@ -129,6 +163,5 @@
 
   @media (max-width: 820px) {
     .wrap { padding: 18px 16px 56px; }
-    .unmatched ul { columns: 1; }
   }
 </style>
