@@ -1,6 +1,7 @@
 <script>
   import '../app.css';
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { counts as countsStore, theme } from '$lib/stores.js';
@@ -20,7 +21,7 @@
   let themeName = $state('dark');
   let searchFocused = $state(false);
   let menuOpen = $state(false);          // mobile filter drawer
-  let isTauri = $state(false);           // running in the desktop app?
+  let isTauri = $state(browser && !!window.__TAURI__?.core?.invoke);   // desktop app? (sync — no flash)
   let update = $state(null);             // { available, latest, url } from GitHub releases
 
   const closeMenu = () => (menuOpen = false);
@@ -48,7 +49,6 @@
     // Desktop app: surface an update if GitHub has a newer release.
     const tauri = window.__TAURI__;
     if (tauri?.core?.invoke) {
-      isTauri = true;
       tauri.core.invoke('check_update').then((u) => { update = u; }).catch(() => {});
     }
     return () => mq.removeEventListener('change', onWide);

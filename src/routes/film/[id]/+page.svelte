@@ -1,12 +1,16 @@
 <script>
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import Poster from '$lib/components/Poster.svelte';
   import Sparkline from '$lib/components/Sparkline.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { displayTitle, gradientFor, colourLabel } from '$lib/util.js';
   import { counts, toast } from '$lib/stores.js';
 
-  let isTauri = $state(false);        // running inside the Tauri desktop app?
+  // Detect the desktop app SYNCHRONOUSLY (withGlobalTauri injects window.__TAURI__
+  // before our bundle runs), so the app UI renders on hydration — no flash of the
+  // browser version then a swap.
+  let isTauri = $state(browser && !!window.__TAURI__?.core?.invoke);
   let playerInfo = $state(null);      // { os, arch, mpv, mpv_path } from the app
   let hideNudge = $state(true);       // hide the "get the app" nudge (until we know)
   let updateInfo = $state(null);      // { available, latest, url } from GitHub releases
@@ -17,7 +21,6 @@
   onMount(() => {
     const t = window.__TAURI__;
     if (t?.core?.invoke) {
-      isTauri = true;
       t.core.invoke('player_info').then((i) => { playerInfo = i; }).catch(() => {});
       t.core.invoke('check_update').then((u) => { updateInfo = u; }).catch(() => {});
       fetch('/api/app-auth').then((r) => r.json()).then((a) => { cfAuth = a; }).catch(() => {});
@@ -113,8 +116,10 @@
   let rewatch = $derived(status === 'rewatch');
   let unfinished = $derived(status === 'unfinished');
   // Something is playable now → Watch is the primary action; otherwise Download /
-  // Choose release are the coloured (actionable) ones.
-  let watchable = $derived(!!(watchInfo?.hasFile || watchInfo?.encoded));
+  // Choose release are the coloured (actionable) ones. Use the instant download
+  // snapshot before the (slow) watch/Radarr check resolves, so the app UI doesn't
+  // lag behind on a downloaded film.
+  let watchable = $derived(watchInfo ? !!(watchInfo.hasFile || watchInfo.encoded) : (film.download === 'downloaded'));
   let downloadLabel = $derived(
     downloadState === 'loading' ? 'Sending…' :
     downloadState === 'queued' ? 'Requested' :
