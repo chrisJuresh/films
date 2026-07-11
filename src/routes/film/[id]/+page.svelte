@@ -5,7 +5,7 @@
   import Sparkline from '$lib/components/Sparkline.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { displayTitle, gradientFor, colourLabel } from '$lib/util.js';
-  import { counts, toast } from '$lib/stores.js';
+  import { counts, toast, downloads, markDownloadStarted } from '$lib/stores.js';
 
   // Detect the desktop app SYNCHRONOUSLY (withGlobalTauri injects window.__TAURI__
   // before our bundle runs), so the app UI renders on hydration — no flash of the
@@ -14,8 +14,6 @@
   let hideNudge = $state(true);       // hide the "get the app" nudge (until we know)
   let updateInfo = $state(null);      // { available, latest, url } from GitHub releases
   let localPath = $state(null);       // this film's locally-cached file (app only)
-  let dlToPc = $state(null);          // { pct, done } while preloading to this PC
-  let dlUnlisten = null;
   let cfAuth = $state(null);          // { cfId, cfSecret } CF Access service token (if configured)
   onMount(() => {
     const t = window.__TAURI__;
@@ -33,6 +31,15 @@
 
   let { data } = $props();
   let film = $derived(data.film);
+  // Preload ("Save to PC") progress from the global store, so it survives navigation.
+  let dlToPc = $derived($downloads[film.id_tspdt] || null);
+  // When a preload completes (even one started before we navigated here), adopt the local file.
+  $effect(() => {
+    if (isTauri && dlToPc?.done && !dlToPc.error && !localPath && window.__TAURI__?.core) {
+      const id = film.id_tspdt;
+      window.__TAURI__.core.invoke('local_file', { id }).then((p) => { if (p && loadedId === id) localPath = p; }).catch(() => {});
+    }
+  });
 
   let status = $state(data.film.status ?? null);      // site status: watchlist | seen | null
   let lbState = $state(data.film.lb_state ?? null);   // letterboxd: watched | unwatched | null
@@ -98,8 +105,7 @@
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
     grabbing = null; cancelling = false; releasesFallback = false; releasesNote = null; sortBy = 'quality'; watchMenu = false;
     dlMenu = false; grabLinks = null; pbCleared = false; certsOpen = false;
-    localPath = null; dlToPc = null;
-    if (dlUnlisten) { dlUnlisten(); dlUnlisten = null; }
+    localPath = null;   // dlToPc is derived from the global store; don't reset it here
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
     if (isTauri && window.__TAURI__?.core) window.__TAURI__.core.invoke('local_file', { id }).then((p) => { if (loadedId === id) localPath = p; }).catch(() => {});
@@ -161,21 +167,17 @@
   }
   async function saveToPc() {
     const t = window.__TAURI__;
-    if (!t?.core?.invoke || !t?.event?.listen) return;
-    dlToPc = { pct: 0, done: false };
-    const url = new URL(`/api/source/${film.id_tspdt}`, window.location.origin).href;
-    if (dlUnlisten) { dlUnlisten(); dlUnlisten = null; }
-    dlUnlisten = await t.event.listen('films-download-progress', (e) => {
-      const d = e.payload;
-      if (!d || d.id !== film.id_tspdt) return;
-      dlToPc = { pct: d.total ? Math.round((d.received / d.total) * 100) : 0, done: d.done };
-    });
+    if (!t?.core?.invoke) return;
+    markDownloadStarted(film.id_tspdt);   // progress tracked in the global store (survives navigation)
+    const id = film.id_tspdt;
+    const url = new URL(`/api/source/${id}`, window.location.origin).href;
     try {
-      localPath = await t.core.invoke('download_to_pc', { url, id: film.id_tspdt, ext: 'mkv', cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret });
-      dlToPc = { pct: 100, done: true };
+      const p = await t.core.invoke('download_to_pc', { url, id, ext: 'mkv', cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret });
+      if (loadedId === id) localPath = p;
       toast('Saved to this PC — it now plays locally.', 'ok');
-    } catch (e) { toast('Download failed: ' + e, 'error', 6000); dlToPc = null; }
-    finally { if (dlUnlisten) { dlUnlisten(); dlUnlisten = null; } }
+    } catch (e) {
+      toast('Download failed: ' + e, 'error', 7000);
+    }
   }
   // The specific "watch this way" options behind the Watch button's caret.
   let watchOptions = $derived.by(() => {
@@ -542,6 +544,10 @@
               <span class="app-saved"><Icon name="check" size={13} stroke={2.4} /> Saved to this PC · plays locally</span>
             {:else if dlToPc && !dlToPc.done}
               <div class="app-dl"><span>Saving to PC · {dlToPc.pct}%</span><div class="pb"><span style="width:{dlToPc.pct}%"></span></div></div>
+            {:else if dlToPc?.done && dlToPc.error}
+              <button class="btn sm warn" onclick={saveToPc} title={dlToPc.error}><Icon name="alert" size={14} /> Save failed — retry</button>
+            {:else if dlToPc?.done}
+              <div class="app-dl"><span>Finishing…</span></div>
             {:else}
               <button class="btn sm" onclick={saveToPc}><Icon name="hdd" size={14} /> Save to PC</button>
             {/if}

@@ -246,10 +246,14 @@ struct DlProgress {
     received: u64,
     total: u64,
     done: bool,
+    error: Option<String>,
 }
 
-/// Download a film to the local cache (preload), emitting `films-download-progress`
-/// events so the UI can show a bar. Returns the final local path when complete.
+/// Download a film to the local cache (preload), RESUMABLE + retrying: a big file
+/// over Cloudflare can drop mid-stream, so on a dropped connection we resume from
+/// the .part with an HTTP Range request. Emits `films-download-progress` events
+/// (including a final one with `error` on failure) so the UI — which tracks these
+/// app-wide — stays correct even across navigation.
 #[tauri::command]
 async fn download_to_pc(app: AppHandle, window: tauri::WebviewWindow, url: String, id: i64, ext: Option<String>, cf_id: Option<String>, cf_secret: Option<String>) -> Result<String, String> {
     use futures_util::StreamExt;
@@ -259,52 +263,86 @@ async fn download_to_pc(app: AppHandle, window: tauri::WebviewWindow, url: Strin
     let ext = ext.unwrap_or_else(|| "mp4".to_string());
     let final_path = dir.join(format!("{id}.{ext}"));
     let part = dir.join(format!("{id}.{ext}.part"));
+    let client = reqwest::Client::builder().user_agent("films-desktop").build().map_err(|e| e.to_string())?;
+    let cookie = cf_cookie_header(&window);
 
-    let client = reqwest::Client::builder()
-        .user_agent("films-desktop")
-        .build()
-        .map_err(|e| e.to_string())?;
-    let mut req = client.get(&url);
-    // Authenticate through Cloudflare Access: Access service token, else the cookie.
-    if let (Some(cid), Some(cs)) = (cf_id.as_deref(), cf_secret.as_deref()) {
-        req = req.header("CF-Access-Client-Id", cid).header("CF-Access-Client-Secret", cs);
-    } else if let Some(cookie) = cf_cookie_header(&window) {
-        req = req.header(reqwest::header::COOKIE, cookie);
-    }
-    let resp = req.send().await.map_err(|e| e.to_string())?;
-    if !resp.status().is_success() {
-        return Err(format!("Download failed (HTTP {})", resp.status()));
-    }
-    // A native client has no login session, so an auth wall (Cloudflare Access)
-    // redirects to a login page. Refuse to save that as if it were the film.
-    let final_host = resp.url().host_str().unwrap_or("").to_string();
-    let ctype = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    if final_host.contains("cloudflareaccess.com") || ctype.starts_with("text/html") {
-        return Err("Cloudflare Access blocked the app — it has no login session. A CF Access service token is needed for native download / mpv.".to_string());
-    }
-    let total = resp.content_length().unwrap_or(0);
-    let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;
-    let mut stream = resp.bytes_stream();
-    let mut received: u64 = 0;
-    let mut last_emit: u64 = 0;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| e.to_string())?;
-        file.write_all(&chunk).map_err(|e| e.to_string())?;
-        received += chunk.len() as u64;
-        if received - last_emit > 2_000_000 {
-            last_emit = received;
-            let _ = app.emit("films-download-progress", DlProgress { id, received, total, done: false });
+    let emit = |received: u64, total: u64, done: bool, error: Option<String>| {
+        let _ = app.emit("films-download-progress", DlProgress { id, received, total, done, error });
+    };
+
+    let mut total: u64 = 0;
+    let attempts = 6u32;
+    let mut last_err = String::new();
+    for _ in 0..attempts {
+        let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        let mut rb = client.get(&url);
+        if let (Some(cid), Some(cs)) = (cf_id.as_deref(), cf_secret.as_deref()) {
+            rb = rb.header("CF-Access-Client-Id", cid).header("CF-Access-Client-Secret", cs);
+        } else if let Some(ck) = cookie.as_deref() {
+            rb = rb.header(reqwest::header::COOKIE, ck);
+        }
+        if have > 0 { rb = rb.header(reqwest::header::RANGE, format!("bytes={}-", have)); }
+
+        let resp = match rb.send().await {
+            Ok(r) => r,
+            Err(e) => { last_err = format!("connection error: {e}"); continue; } // retry
+        };
+        let status = resp.status();
+        if status.as_u16() == 416 {
+            // Requested range beyond EOF → the .part already has the whole file.
+            std::fs::rename(&part, &final_path).map_err(|e| e.to_string())?;
+            emit(have, have, true, None);
+            return Ok(final_path.to_string_lossy().to_string());
+        }
+        if !status.is_success() {
+            emit(0, 0, true, Some(format!("HTTP {status}")));
+            return Err(format!("Download failed (HTTP {status})"));
+        }
+        // Auth wall (Cloudflare Access) with no session → a login page, not the film.
+        let host = resp.url().host_str().unwrap_or("").to_string();
+        let ctype = resp.headers().get(reqwest::header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+        if host.contains("cloudflareaccess.com") || ctype.starts_with("text/html") {
+            let _ = std::fs::remove_file(&part);
+            let msg = "Cloudflare Access blocked the app — no login session. Set up a CF Access service token.".to_string();
+            emit(0, 0, true, Some(msg.clone()));
+            return Err(msg);
+        }
+
+        let resuming = have > 0 && status.as_u16() == 206;
+        let mut received = if resuming { have } else { 0 };
+        total = if resuming { have + resp.content_length().unwrap_or(0) } else { resp.content_length().unwrap_or(0) };
+        let mut file = if resuming {
+            std::fs::OpenOptions::new().append(true).open(&part).map_err(|e| e.to_string())?
+        } else {
+            std::fs::File::create(&part).map_err(|e| e.to_string())?
+        };
+
+        let mut stream = resp.bytes_stream();
+        let mut last_emit = received;
+        let mut dropped = false;
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(c) => {
+                    if let Err(e) = file.write_all(&c) { return Err(e.to_string()); }
+                    received += c.len() as u64;
+                    if received - last_emit > 2_000_000 {
+                        last_emit = received;
+                        emit(received, total, false, None);
+                    }
+                }
+                Err(e) => { last_err = format!("stream dropped: {e}"); dropped = true; break; } // resume next attempt
+            }
+        }
+        let _ = file.flush();
+        if !dropped {
+            std::fs::rename(&part, &final_path).map_err(|e| e.to_string())?;
+            emit(received, total.max(received), true, None);
+            return Ok(final_path.to_string_lossy().to_string());
         }
     }
-    file.flush().ok();
-    std::fs::rename(&part, &final_path).map_err(|e| e.to_string())?;
-    let _ = app.emit("films-download-progress", DlProgress { id, received, total, done: true });
-    Ok(final_path.to_string_lossy().to_string())
+    let msg = format!("Download kept dropping — gave up after {attempts} tries ({last_err}).");
+    emit(0, total, true, Some(msg.clone()));
+    Err(msg)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

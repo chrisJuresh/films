@@ -14,3 +14,23 @@ export const counts = writable({ watchlist: 0, seen: 0, rewatch: 0, unfinished: 
 
 /* theme */
 export const theme = writable('dark');
+
+/* Desktop app: "Save to PC" downloads run in the app backend and keep going
+   across navigation, so their progress is tracked HERE (not on the film-page
+   component) keyed by film id: { [id]: { pct, done, error } }. */
+export const downloads = writable({});
+let _dlListening = false;
+export async function initDownloadTracker() {
+  const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
+  if (_dlListening || !t?.event?.listen) return;
+  _dlListening = true;
+  await t.event.listen('films-download-progress', (e) => {
+    const d = e.payload;
+    if (!d || d.id == null) return;
+    const pct = d.total ? Math.round((d.received / d.total) * 100) : 0;
+    downloads.update((m) => ({ ...m, [d.id]: { pct, done: !!d.done, error: d.error || null } }));
+  });
+}
+export function markDownloadStarted(id) {
+  downloads.update((m) => ({ ...m, [id]: { pct: 0, done: false, error: null } }));
+}
