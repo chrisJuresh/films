@@ -31,8 +31,38 @@ function config() {
   return { baseUrl, apiKey, rootFolderPath, qualityProfileId };
 }
 
-export function downloadWithRadarr(imdbId, year) {
-  return downloadWithRadarrClient(imdbId, config(), undefined, { year });
+// Pick the best release for an automatic grab: highest resolution, then seeders.
+function bestByQuality(releases) {
+  const rank = (q) => {
+    const s = (q || '').toLowerCase();
+    if (s.includes('2160') || s.includes('4k') || s.includes('uhd')) return 4;
+    if (s.includes('1080')) return 3;
+    if (s.includes('720')) return 2;
+    if (s.includes('480')) return 1;
+    return 0;
+  };
+  return [...(releases || [])].sort((a, b) => (rank(b.quality) - rank(a.quality)) || ((b.seeders || 0) - (a.seeders || 0)))[0] || null;
+}
+
+// The "Download" button. Radarr's normal add + auto-search first; but Radarr
+// searches indexers on TMDB's year, so year-mismatched films (e.g. festival
+// premiere vs theatrical release) find nothing. In that case fall back to a
+// Prowlarr search on OUR catalogue year and grab the best result, pushed back
+// through Radarr so it still imports/renames.
+export async function downloadWithRadarr(imdbId, year) {
+  const cfg = config();
+  const res = await downloadWithRadarrClient(imdbId, cfg, undefined, { year });
+  if (res.status === 'available' || !res.yearMismatch || !prowlarrEnabled()) return res;
+  try {
+    const rr = await searchReleases(imdbId, cfg, { year });
+    if (rr.releases.length > 0) return res;                 // Radarr can find it after all
+    const pick = bestByQuality(await searchProwlarr(rr.title, year));
+    if (!pick) return res;                                  // nothing on Prowlarr either
+    await pushRelease(pick, cfg);
+    return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'prowlarr', grabbed: pick.title };
+  } catch {
+    return res;                                             // fallback is best-effort
+  }
 }
 
 export function getRadarrStatus(imdbId) {

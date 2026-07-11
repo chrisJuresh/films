@@ -45,7 +45,7 @@ test('adds a new movie and asks Radarr to search for it', async () => {
   const result = await downloadWithRadarrClient('tt0078748', settings(), mock.fetch);
 
   assert.deepEqual(result, {
-    status: 'queued', title: 'Alien', radarrId: 42, alreadyAdded: false
+    status: 'queued', title: 'Alien', radarrId: 42, alreadyAdded: false, yearMismatch: false
   });
   assert.equal(mock.calls.length, 3);
   assert.equal(mock.calls[0].url.pathname, '/radarr/api/v3/movie/lookup/imdb');
@@ -94,6 +94,16 @@ test('never PUTs to change an existing movie\'s year before searching', async ()
   assert.equal(mock.calls.some((c) => c.options?.method === 'PUT'), false);
 });
 
+test('flags a catalogue/TMDB year mismatch (drives the Prowlarr fallback)', async () => {
+  const mismatch = mockFetch(jsonResponse(lookup), jsonResponse([]), jsonResponse({ id: 42 }));
+  const r1 = await downloadWithRadarrClient('tt0078748', settings(), mismatch.fetch, { year: '1975' });
+  assert.equal(r1.yearMismatch, true);                    // lookup 1979 vs catalogue 1975
+
+  const match = mockFetch(jsonResponse(lookup), jsonResponse([]), jsonResponse({ id: 42 }));
+  const r2 = await downloadWithRadarrClient('tt0078748', settings(), match.fetch, { year: 1979 });
+  assert.equal(r2.yearMismatch, false);
+});
+
 test('searches an existing movie that has no file', async () => {
   const mock = mockFetch(
     jsonResponse(lookup),
@@ -119,7 +129,7 @@ test('does not start a search when Radarr already has the file', async () => {
 
   const result = await downloadWithRadarrClient('tt0078748', settings(), mock.fetch);
 
-  assert.deepEqual(result, { status: 'available', title: 'Alien', radarrId: 7 });
+  assert.deepEqual(result, { status: 'available', title: 'Alien', radarrId: 7, yearMismatch: false });
   assert.equal(mock.calls.length, 2);
 });
 

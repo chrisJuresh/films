@@ -82,11 +82,17 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   // refresh keeps TMDB's value (verified against live Radarr). So when TMDB's
   // year differs from the year a release is tagged with, the auto-search can
   // miss it; the interactive picker is the escape hatch for those.
+  // Flag when our catalogue year differs from TMDB's — those are the films whose
+  // auto-search Radarr will run on the "wrong" year, so the caller can fall back
+  // to a Prowlarr search on our year.
+  const catYear = Number.parseInt(hints.year, 10);
+  const yearMismatch = Number.isInteger(catYear) && catYear !== lookup.year;
+
   const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
   const movie = Array.isArray(existing) ? existing[0] : null;
 
   if (movie?.hasFile) {
-    return { status: 'available', title: movie.title || lookup.title, radarrId: movie.id };
+    return { status: 'available', title: movie.title || lookup.title, radarrId: movie.id, yearMismatch };
   }
 
   if (movie?.id) {
@@ -94,7 +100,7 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
       method: 'POST',
       body: { name: 'MoviesSearch', movieIds: [movie.id] }
     }, fetchImpl);
-    return { status: 'queued', title: movie.title || lookup.title, radarrId: movie.id, alreadyAdded: true };
+    return { status: 'queued', title: movie.title || lookup.title, radarrId: movie.id, alreadyAdded: true, yearMismatch };
   }
 
   const added = await requestRadarr(settings, 'movie', {
@@ -109,7 +115,7 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
     }
   }, fetchImpl);
 
-  return { status: 'queued', title: added?.title || lookup.title, radarrId: added?.id, alreadyAdded: false };
+  return { status: 'queued', title: added?.title || lookup.title, radarrId: added?.id, alreadyAdded: false, yearMismatch };
 }
 
 /** Cancel any in-progress download for a film (removes it from Radarr's queue

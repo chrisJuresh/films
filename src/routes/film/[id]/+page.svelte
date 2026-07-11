@@ -148,12 +148,14 @@
       downloadState = result.status === 'available' ? 'available' : 'queued';
       if (downloadState === 'available') {
         toast(`“${title}” is already downloaded in Radarr.`, 'info', 4200);
+      } else if (result.via === 'prowlarr') {
+        toast(`Radarr couldn’t find “${title}” on its year — grabbed a Prowlarr release instead.`, 'ok', 5400);
       } else if (result.alreadyAdded) {
         toast(`Radarr is searching for “${title}”.`, 'ok', 4200);
       } else {
         toast(`Added “${title}” to Radarr and started a search.`, 'ok', 4200);
       }
-      loadRadarr(film.id_tspdt);
+      loadRadarr(film.id_tspdt); loadWatch(film.id_tspdt);
     } catch (cause) {
       downloadState = 'idle';
       toast(cause?.message || 'Could not connect to Radarr.', 'error', 4800);
