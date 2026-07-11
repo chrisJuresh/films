@@ -95,6 +95,8 @@
   function clearAll() { navigate({ q: '', decade: '', genre: '', country: '', colour: '', maxage: '', radarr: '', new: '' }); }
 
   let userEmail = $derived(data?.user || null);
+  let dl = $derived(data?.downloads);
+  let hasDownloads = $derived(!!(dl && (dl.downloaded || dl.downloading || dl.wanted || dl.error)));
 
   // Age-rating slider. maxage = highest rating age to show; 18 = off (everything,
   // including unrated). A film's age is its most-restrictive country rating, so
@@ -253,6 +255,11 @@
       </section>
     </div>
 
+    {#if hasDownloads}
+      <a class="side-link" href="/downloads" onclick={closeMenu}>
+        <span class="sl-ic"><Icon name="download" size={15} /></span> Download tracker{#if dl.downloading} · {dl.downloading} active{/if}
+      </a>
+    {/if}
     <a class="side-link" href="/letterboxd" onclick={closeMenu}>
       <span class="sl-ic"><Icon name="sync" size={15} /></span> Letterboxd import &amp; sync
     </a>
