@@ -105,7 +105,7 @@ fn open_default(url: &str) -> Result<String, String> {
 /// otherwise mpv is used — and if mpv can't be found we return a clear error
 /// (rather than silently opening the browser, which just re-streams).
 #[tauri::command]
-async fn open_in_player(window: tauri::WebviewWindow, url: String, title: Option<String>, prefer: Option<String>) -> Result<String, String> {
+async fn open_in_player(window: tauri::WebviewWindow, url: String, title: Option<String>, prefer: Option<String>, cf_id: Option<String>, cf_secret: Option<String>) -> Result<String, String> {
     if prefer.as_deref() == Some("default") {
         return open_default(&url);
     }
@@ -115,10 +115,13 @@ async fn open_in_player(window: tauri::WebviewWindow, url: String, title: Option
             if let Some(t) = title {
                 c.arg(format!("--force-media-title={t}"));
             }
-            // Pass the logged-in session so mpv gets through Cloudflare Access
-            // (skipped for local files, which need no auth).
+            // Authenticate through Cloudflare Access (skipped for local files):
+            // prefer an Access service token (reliable), else the session cookie.
             if url.starts_with("http") {
-                if let Some(cookie) = cf_cookie_header(&window) {
+                if let (Some(id), Some(secret)) = (cf_id.as_deref(), cf_secret.as_deref()) {
+                    c.arg(format!("--http-header-fields=CF-Access-Client-Id: {id}"));
+                    c.arg(format!("--http-header-fields-append=CF-Access-Client-Secret: {secret}"));
+                } else if let Some(cookie) = cf_cookie_header(&window) {
                     c.arg(format!("--http-header-fields=Cookie: {cookie}"));
                 }
             }
@@ -234,7 +237,7 @@ struct DlProgress {
 /// Download a film to the local cache (preload), emitting `films-download-progress`
 /// events so the UI can show a bar. Returns the final local path when complete.
 #[tauri::command]
-async fn download_to_pc(app: AppHandle, window: tauri::WebviewWindow, url: String, id: i64, ext: Option<String>) -> Result<String, String> {
+async fn download_to_pc(app: AppHandle, window: tauri::WebviewWindow, url: String, id: i64, ext: Option<String>, cf_id: Option<String>, cf_secret: Option<String>) -> Result<String, String> {
     use futures_util::StreamExt;
     use std::io::Write;
 
@@ -248,8 +251,10 @@ async fn download_to_pc(app: AppHandle, window: tauri::WebviewWindow, url: Strin
         .build()
         .map_err(|e| e.to_string())?;
     let mut req = client.get(&url);
-    // Authenticate as the logged-in user (Cloudflare Access) via the webview cookie.
-    if let Some(cookie) = cf_cookie_header(&window) {
+    // Authenticate through Cloudflare Access: Access service token, else the cookie.
+    if let (Some(cid), Some(cs)) = (cf_id.as_deref(), cf_secret.as_deref()) {
+        req = req.header("CF-Access-Client-Id", cid).header("CF-Access-Client-Secret", cs);
+    } else if let Some(cookie) = cf_cookie_header(&window) {
         req = req.header(reqwest::header::COOKIE, cookie);
     }
     let resp = req.send().await.map_err(|e| e.to_string())?;

@@ -51,6 +51,13 @@ services:
       - QBITTORRENT_URL=${QBITTORRENT_URL:-http://qbittorrent:8081}
       - QBITTORRENT_USER=${QBITTORRENT_USER:-}
       - QBITTORRENT_PASS=${QBITTORRENT_PASS:-}
+      # Optional Cloudflare Access service token so the DESKTOP app's native
+      # players (mpv) + downloader can authenticate. Create a service token in
+      # Cloudflare Zero Trust → Access → Service Auth, add an Access policy on the
+      # films app that allows it, and set both here. Handed only to the logged-in
+      # app via /api/app-auth (behind Access); never in the installer.
+      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID:-}
+      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET:-}
       # iGPU transcoding (encode/stream via VAAPI). ENCODE_DIR lives under the
       # /srv/films mount so encoded copies persist. MEDIA_ROOTS are searched to
       # turn a Radarr file path into a path this container can read (auto-picks

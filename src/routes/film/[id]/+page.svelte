@@ -13,12 +13,14 @@
   let localPath = $state(null);       // this film's locally-cached file (app only)
   let dlToPc = $state(null);          // { pct, done } while preloading to this PC
   let dlUnlisten = null;
+  let cfAuth = $state(null);          // { cfId, cfSecret } CF Access service token (if configured)
   onMount(() => {
     const t = window.__TAURI__;
     if (t?.core?.invoke) {
       isTauri = true;
       t.core.invoke('player_info').then((i) => { playerInfo = i; }).catch(() => {});
       t.core.invoke('check_update').then((u) => { updateInfo = u; }).catch(() => {});
+      fetch('/api/app-auth').then((r) => r.json()).then((a) => { cfAuth = a; }).catch(() => {});
     } else {
       hideNudge = localStorage.getItem('films-hide-app-nudge') === '1';
     }
@@ -49,6 +51,7 @@
   let grabbing = $state(null);        // guid of the release currently being grabbed
   let cancelling = $state(false);
   let releasesFallback = $state(false); // results came from the Prowlarr year-fallback
+  let releasesNote = $state(null);      // e.g. "1337x is temporarily down"
   let sortBy = $state('quality');     // release sort: 'quality' | 'seeders' | 'size'
   let watchMenu = $state(false);      // Watch split-button dropdown open?
   let splitEl;                        // the watch split container (for click-away)
@@ -92,7 +95,7 @@
     if (loadedId === id) return;
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
-    grabbing = null; cancelling = false; releasesFallback = false; sortBy = 'quality'; watchMenu = false;
+    grabbing = null; cancelling = false; releasesFallback = false; releasesNote = null; sortBy = 'quality'; watchMenu = false;
     dlMenu = false; grabLinks = null; pbCleared = false; certsOpen = false;
     localPath = null; dlToPc = null;
     if (dlUnlisten) { dlUnlisten(); dlUnlisten = null; }
@@ -146,7 +149,7 @@
     const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
     if (t?.core?.invoke) {
       const target = localPath || new URL(`/api/source/${film.id_tspdt}`, window.location.origin).href;
-      t.core.invoke('open_in_player', { url: target, title: displayTitle(film.title), prefer })
+      t.core.invoke('open_in_player', { url: target, title: displayTitle(film.title), prefer, cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret })
         .then((used) => toast(`Opening in ${used}…`, 'ok'))
         .catch((e) => toast(String(e), 'error', 7000));   // e.g. "mpv isn't installed…"
       return;
@@ -165,7 +168,7 @@
       dlToPc = { pct: d.total ? Math.round((d.received / d.total) * 100) : 0, done: d.done };
     });
     try {
-      localPath = await t.core.invoke('download_to_pc', { url, id: film.id_tspdt, ext: 'mkv' });
+      localPath = await t.core.invoke('download_to_pc', { url, id: film.id_tspdt, ext: 'mkv', cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret });
       dlToPc = { pct: 100, done: true };
       toast('Saved to this PC — it now plays locally.', 'ok');
     } catch (e) { toast('Download failed: ' + e, 'error', 6000); dlToPc = null; }
@@ -205,6 +208,7 @@
   let inLibrary = $derived(radarr ? !!radarr.hasFile : film.download === 'downloaded');
   let dlBtn = $derived.by(() => {
     if (downloadState === 'loading') return { label: 'Sending…', disabled: true, icon: 'sync', spin: true };
+    if (downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };   // just clicked (brief)
     if (radarr) {                                     // live view known → trust it
       if (radarr.hasFile) return { label: 'In library', disabled: true, icon: 'check', spin: false };
       if (radarr.queue) {
@@ -213,15 +217,12 @@
         return { label: importing ? 'Importing…' : `Downloading${p != null ? ' ' + p + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
       }
       if (radarr.qb) return { label: radarr.qb.done ? 'Importing…' : `Downloading ${radarr.qb.progress}%…`, disabled: true, icon: 'sync', spin: true };
-      if (!radarr.present) return { label: 'Download', disabled: false, icon: 'download', spin: false };   // gone from Radarr → re-grab
-      if (downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
-      if (radarr.monitored) return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
+      // Present-but-idle (monitored, nothing downloading) OR not present → grabbable / retryable.
       return { label: 'Download', disabled: false, icon: 'download', spin: false };
     }
     // Radarr not loaded yet → first paint from the snapshot.
     if (film.download === 'downloaded') return { label: 'In library', disabled: true, icon: 'check', spin: false };
     if (film.download === 'downloading') return { label: `Downloading${film.download_progress != null ? ' ' + film.download_progress + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
-    if (film.download === 'wanted' || downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
     return { label: 'Download', disabled: false, icon: 'download', spin: false };
   });
   async function downloadFilm() {
@@ -281,6 +282,7 @@
       if (!r.ok) throw new Error(d?.message || 'Release search failed.');
       releases = d.releases || [];
       releasesFallback = !!d.fallback;
+      releasesNote = d.note || null;
     } catch (e) { toast(e.message || 'Release search failed.', 'error', 4600); }
     finally { releasesLoading = false; }
   }
@@ -629,7 +631,11 @@
       {#if releasesFallback}<p class="rr-meta">Radarr found nothing on its year, so these are from a Prowlarr search on {film.year} — grabbing pushes the release back through Radarr so it still imports.</p>{/if}
       {#if radarr?.hasFile}<p class="rr-meta">Already in your library — grabbing fetches another release (Radarr treats it as an upgrade/replace).</p>{/if}
       {#if sortedReleases.length === 0}
-        <p class="rr-meta">No releases found{releasesFallback ? '' : ' — Radarr searches on TMDB’s year for this film'}.</p>
+        {#if releasesNote}
+          <p class="rr-warn"><Icon name="alert" size={12} /> {releasesNote}</p>
+        {:else}
+          <p class="rr-meta">No releases found{releasesFallback ? '' : ' — Radarr searches on TMDB’s year for this film'}.</p>
+        {/if}
       {:else}
         {#each sortedReleases as r (r.guid)}
           <div class="rel" class:rej={r.rejected} class:pick={r.guid === autoPickGuid}>

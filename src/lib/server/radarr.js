@@ -1,6 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { downloadWithRadarrClient, radarrStatus, movieFileInfo, cancelDownload, libraryState, searchReleases, grabRelease, pushRelease, manualImport, ensureMovie, movieDownloadIds, RadarrError } from './radarrClient.js';
-import { searchProwlarr, prowlarrEnabled } from './prowlarr.js';
+import { searchProwlarr, prowlarrEnabled, prowlarrDownNote } from './prowlarr.js';
 import { qbEnabled, grabToQb, qbProgressForMovie, qbTorrentsForMovie, exportTorrent, setImporter, startPump } from './qbittorrent.js';
 import { syncFilmDownloads } from './db.js';
 
@@ -63,7 +63,7 @@ export async function downloadWithRadarr(imdbId, year) {
   if (rr.releases.some((r) => !r.rejected)) return res;     // Radarr can grab one itself
   try { pw = await searchProwlarr(cleanQuery(rr.title), year); } catch { pw = []; }
   const pick = bestByQuality(pw);
-  if (!pick) return { ...res, prowlarrFound: 0, grabFailed: 'No releases found right now — your indexers returned nothing (they may be temporarily down).' };
+  if (!pick) return { ...res, prowlarrFound: 0, grabFailed: (await prowlarrDownNote()) || 'No releases found for this film right now.' };
   try {
     await pushRelease(pick, cfg);
     return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'prowlarr', grabbed: pick.title };
@@ -110,7 +110,7 @@ export async function getReleases(imdbId, year) {
   }
   try {
     const pw = await searchProwlarr(cleanQuery(rr.title), year);
-    return { releases: pw, source: pw.length ? 'prowlarr' : 'radarr', fallback: true };
+    return { releases: pw, source: pw.length ? 'prowlarr' : 'radarr', fallback: true, note: pw.length ? null : await prowlarrDownNote() };
   } catch {
     return { releases: [], source: 'radarr', fallback: true };   // Prowlarr down → no fallback, not an error
   }
