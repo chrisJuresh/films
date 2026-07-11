@@ -147,7 +147,7 @@ input, button, select { font-family: inherit; }
 
 .theme { padding: 9px 12px; border-radius: 9px; border: 1px solid var(--border);
   background: var(--surface); color: var(--muted); font-size: 13px; cursor: pointer; transition: all .12s;
-  display: inline-flex; align-items: center; gap: 8px; }
+  display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
 .theme:hover { color: var(--text); border-color: var(--border-strong); }
 
 /* form control (sort select on catalogue) */

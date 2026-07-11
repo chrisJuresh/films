@@ -132,6 +132,30 @@ export async function grabProwlarrRelease(imdbId, year, release) {
   }
 }
 
+// For the in-library "Download" menu: the best release's magnet (if any) + a
+// flag for whether a .torrent is fetchable. Uses Prowlarr; safe for the browser
+// (no API key). `title` is the film's title for the search query.
+export async function grabLinksFor(imdbId, year, title) {
+  if (!prowlarrEnabled()) return { magnet: null, hasTorrent: false };
+  try {
+    const pick = bestByQuality(await searchProwlarr(title, year));
+    return { magnet: pick?.magnetUrl || null, hasTorrent: !!(pick?.downloadUrl || pick?.magnetUrl) };
+  } catch { return { magnet: null, hasTorrent: false }; }
+}
+
+// Fetch the best release's .torrent bytes SERVER-SIDE (the Prowlarr download URL
+// carries the API key, which must never reach the browser). Returns bytes or null.
+export async function torrentFor(imdbId, year, title) {
+  if (!prowlarrEnabled()) return null;
+  const pick = bestByQuality(await searchProwlarr(title, year));
+  if (!pick?.downloadUrl) return null;
+  try {
+    const r = await fetch(pick.downloadUrl);
+    if (!r.ok) return null;
+    return Buffer.from(await r.arrayBuffer());
+  } catch { return null; }
+}
+
 // Resume the qBittorrent import pump (and wire its Radarr force-import) when the
 // module loads, so completed downloads still import after a server restart.
 if (qbEnabled()) {

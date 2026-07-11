@@ -1,0 +1,70 @@
+name: desktop-build
+
+# Builds the Tauri desktop app into installers (Windows .exe/.msi, macOS .dmg,
+# Linux .AppImage/.deb) and publishes them as a GitHub Release, so there's a
+# downloadable .exe without building anything by hand.
+#
+# Runs automatically when anything under desktop/ changes, and can be started
+# by hand from the Actions tab (the "Run workflow" button).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+
+permissions:
+  contents: write            # create the release + upload installers
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: Linux system deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
+            build-essential curl wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev
+
+      - name: Install deps + generate icons
+        working-directory: desktop
+        run: |
+          npm install
+          npx @tauri-apps/cli icon ../static/favicon.svg
+
+      - name: Build + publish installers
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tagName: films-desktop-v__VERSION__
+          releaseName: 'Film Index desktop v__VERSION__'
+          releaseBody: |
+            Desktop app for films.chrisj.uk — opens films in mpv (or your default player).
+            - Windows: the `*-setup.exe` (or `.msi`)
+            - macOS: the `.dmg`
+            - Linux: the `.AppImage` or `.deb`
+            First launch: sign in through Cloudflare Access in the window.
+          releaseDraft: false
+          prerelease: false

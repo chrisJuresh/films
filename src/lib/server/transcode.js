@@ -6,7 +6,7 @@
 // on the iGPU via h264_vaapi.
 import { spawn } from 'node:child_process';
 import { dirname } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync } from 'node:fs';
 import { VAAPI_DEVICE } from './media.js';
 
 const jobs = new Map();                                   // film id -> encode job (in-memory)
@@ -18,6 +18,13 @@ export function startEncode(id, src, out, duration, quality = '1080') {
   const existing = jobs.get(id);
   if (existing && existing.state === 'running') return existing;
   try { mkdirSync(dirname(out), { recursive: true }); } catch { /* best-effort */ }
+
+  // Encode to a temp file and only rename to the final (served) path on success.
+  // An interrupted/failed encode (killed, container restart) then never leaves a
+  // broken MP4 that the stream endpoint would serve instead of a live transcode.
+  const part = `${out}.part`;
+  try { rmSync(part, { force: true }); } catch { /* best-effort */ }
+  const done = () => { try { rmSync(part, { force: true }); } catch { /* gone */ } };
 
   const job = { state: 'running', percent: 0, out, error: null };
   jobs.set(id, job);
@@ -31,7 +38,7 @@ export function startEncode(id, src, out, duration, quality = '1080') {
     '-c:a', 'aac', '-b:a', '160k', '-ac', '2',
     '-movflags', '+faststart',
     '-progress', 'pipe:1', '-nostats',
-    out
+    part
   ];
   const p = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let buf = '', errTail = '';
@@ -48,10 +55,16 @@ export function startEncode(id, src, out, duration, quality = '1080') {
     }
   });
   p.stderr.on('data', (d) => { errTail = (errTail + d).slice(-600); });
-  p.on('error', (e) => { job.state = 'error'; job.error = e.message; });
+  p.on('error', (e) => { job.state = 'error'; job.error = e.message; done(); });
   p.on('close', (code) => {
-    if (code === 0) { job.state = 'done'; job.percent = 100; }
-    else if (job.state !== 'error') { job.state = 'error'; job.error = (errTail.trim().split('\n').pop() || `ffmpeg exited ${code}`); }
+    if (code === 0) {
+      try { renameSync(part, out); job.state = 'done'; job.percent = 100; }
+      catch (e) { job.state = 'error'; job.error = `Could not finalise the encode: ${e.message}`; done(); }
+    } else if (job.state !== 'error') {
+      job.state = 'error';
+      job.error = (errTail.trim().split('\n').pop() || `ffmpeg exited ${code}`);
+      done();
+    }
   });
   return job;
 }

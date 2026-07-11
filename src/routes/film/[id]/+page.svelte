@@ -38,6 +38,9 @@
   let sortBy = $state('quality');     // release sort: 'quality' | 'seeders' | 'size'
   let watchMenu = $state(false);      // Watch split-button dropdown open?
   let splitEl;                        // the watch split container (for click-away)
+  let dlMenu = $state(false);         // Download split-button dropdown open?
+  let dlSplitEl;
+  let grabLinks = $state(null);       // { magnet, hasTorrent } for in-library download
 
   // Resolution rank so we can sort/mark quality across Radarr ("Bluray-1080p")
   // and Prowlarr ("1080p") naming alike.
@@ -76,6 +79,7 @@
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
     grabbing = null; cancelling = false; releasesFallback = false; sortBy = 'quality'; watchMenu = false;
+    dlMenu = false; grabLinks = null;
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
@@ -135,6 +139,13 @@
     return o;
   });
   function pickWatch(o) { watchMenu = false; if (o.act) o.act(); }
+  async function openDlMenu() {
+    dlMenu = !dlMenu;
+    if (dlMenu && !grabLinks) {
+      try { grabLinks = await (await fetch(`/api/grab-links/${film.id_tspdt}`)).json(); }
+      catch { grabLinks = { hasTorrent: false, magnet: null }; }
+    }
+  }
   async function downloadFilm() {
     if (downloadState !== 'idle') return;
     downloadState = 'loading';
@@ -301,7 +312,10 @@
 </script>
 
 <svelte:head><title>{displayTitle(film.title)} ({film.year}) · Film Index</title></svelte:head>
-<svelte:window onclick={(e) => { if (watchMenu && splitEl && !splitEl.contains(e.target)) watchMenu = false; }} />
+<svelte:window onclick={(e) => {
+  if (watchMenu && splitEl && !splitEl.contains(e.target)) watchMenu = false;
+  if (dlMenu && dlSplitEl && !dlSplitEl.contains(e.target)) dlMenu = false;
+}} />
 
 <div class="backdrop" class:img={ready && meta.backdrop}
      style={ready && meta.backdrop ? `background-image:url("${meta.backdrop}")` : `background:${gradientFor(film.title)}`}></div>
@@ -357,7 +371,23 @@
             </div>
           {/if}
         </div>
-        <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadState === 'loading' ? 'sync' : downloadIcon} size={16} spin={downloadState === 'loading'} /> {downloadLabel}</button>
+        {#if radarr?.hasFile}
+          <div class="watch-split has-caret" bind:this={dlSplitEl}>
+            <a class="btn" href="/api/file/{film.id_tspdt}" download><Icon name="download" size={16} /> Download</a>
+            <button class="btn caret" aria-label="Download options" aria-expanded={dlMenu} onclick={openDlMenu}><Icon name="chevron" size={15} /></button>
+            {#if dlMenu}
+              <div class="watch-menu" role="menu">
+                <a class="wm-item" href="/api/file/{film.id_tspdt}" download onclick={() => dlMenu = false}><Icon name="download" size={14} /> Download file</a>
+                {#if grabLinks?.hasTorrent}<a class="wm-item" href="/api/file/{film.id_tspdt}/torrent" download onclick={() => dlMenu = false}><Icon name="torrent" size={14} /> Save .torrent</a>{/if}
+                {#if grabLinks?.magnet}<a class="wm-item" href={grabLinks.magnet} onclick={() => dlMenu = false}><Icon name="magnet" size={14} /> Open magnet link</a>{/if}
+                {#if grabLinks && !grabLinks.hasTorrent && !grabLinks.magnet}<div class="wm-empty">No torrent/magnet found</div>{/if}
+                {#if !grabLinks}<div class="wm-empty">Looking up sources…</div>{/if}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadState === 'loading' ? 'sync' : downloadIcon} size={16} spin={downloadState === 'loading'} /> {downloadLabel}</button>
+        {/if}
         <button class="btn" onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
@@ -651,14 +681,16 @@
 
   /* Watch split button + its "how to watch" dropdown */
   .watch-split { position: relative; display: inline-flex; }
-  .watch-split.has-caret .btn.primary:first-child { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
-  .watch-split .btn.primary.caret { border-top-left-radius: 3px; border-bottom-left-radius: 3px;
+  .watch-split.has-caret .btn:first-child { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+  .watch-split .btn.caret { border-top-left-radius: 3px; border-bottom-left-radius: 3px;
     padding-left: 9px; padding-right: 9px; margin-left: 2px; }
   .watch-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 40; min-width: 234px; padding: 6px;
     background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 13px; box-shadow: var(--shadow); }
-  .wm-item { display: block; width: 100%; text-align: left; padding: 9px 11px; border-radius: 8px; border: 0;
-    background: transparent; color: var(--text); font-size: 13px; cursor: pointer; text-decoration: none; white-space: nowrap; }
+  .wm-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 9px 11px;
+    border-radius: 8px; border: 0; background: transparent; color: var(--text); font-size: 13px; cursor: pointer;
+    text-decoration: none; white-space: nowrap; }
   .wm-item:hover { background: var(--surface); }
+  .wm-empty { padding: 9px 11px; font-size: 12.5px; color: var(--muted); }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }

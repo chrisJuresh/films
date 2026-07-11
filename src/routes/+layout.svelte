@@ -251,6 +251,9 @@
           <span>{userEmail}</span>
         </div>
       {/if}
+      <a class="theme" href="https://github.com/chrisJuresh/films/releases/latest" target="_blank" rel="noopener" title="Download the desktop app — opens films in mpv / your default player">
+        <Icon name="monitor" size={15} /> Desktop app
+      </a>
       <button class="theme" onclick={toggleTheme} title="Toggle theme">
         {#if themeName === 'light'}<Icon name="sun" size={15} /> Light{:else}<Icon name="moon" size={15} /> Dark{/if}
       </button>

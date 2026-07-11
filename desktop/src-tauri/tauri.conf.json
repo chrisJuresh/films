@@ -3,7 +3,7 @@
   "productName": "Film Index",
   "version": "0.1.0",
   "identifier": "uk.chrisj.films.desktop",
-  "build": {},
+  "build": { "frontendDist": "../dist" },
   "app": {
     "withGlobalTauri": true,
     "windows": [

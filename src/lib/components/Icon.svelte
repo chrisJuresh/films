@@ -24,6 +24,9 @@
     up:        '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
     chevron:   '<path d="m6 9 6 6 6-6"/>',
     hdd:       '<rect x="3" y="7.5" width="18" height="9" rx="2"/><path d="M7 12h5.5"/><path d="M16.5 12h.01"/>',
+    monitor:   '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/>',
+    torrent:   '<circle cx="12" cy="12" r="9"/><path d="M12 7v6l4 2"/>',
+    magnet:    '<path d="M6 4v7a6 6 0 0 0 12 0V4"/><path d="M6 4H2.5M18 4h3.5M6 8H2.5M18 8h3.5"/>',
   };
 </script>
 
