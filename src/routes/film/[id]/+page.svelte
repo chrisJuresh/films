@@ -334,7 +334,7 @@
       </div>
 
       <div class="cta">
-        <div class="watch-split" bind:this={splitEl}>
+        <div class="watch-split" class:has-caret={watchOptions.length > 1} bind:this={splitEl}>
           <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
           {#if watchOptions.length > 1}
             <button class="btn primary caret" aria-label="Choose how to watch" aria-expanded={watchMenu} onclick={() => watchMenu = !watchMenu}><Icon name="chevron" size={15} /></button>
@@ -638,7 +638,7 @@
 
   /* Watch split button + its "how to watch" dropdown */
   .watch-split { position: relative; display: inline-flex; }
-  .watch-split .btn.primary:first-child { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+  .watch-split.has-caret .btn.primary:first-child { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
   .watch-split .btn.primary.caret { border-top-left-radius: 3px; border-bottom-left-radius: 3px;
     padding-left: 9px; padding-right: 9px; margin-left: 2px; }
   .watch-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 40; min-width: 234px; padding: 6px;
