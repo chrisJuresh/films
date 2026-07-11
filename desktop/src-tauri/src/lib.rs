@@ -122,8 +122,17 @@ async fn open_in_player(window: tauri::WebviewWindow, url: String, title: Option
                     c.arg(format!("--http-header-fields=Cookie: {cookie}"));
                 }
             }
+            // Our URLs are direct files/streams, never YouTube — skip the ytdl hook
+            // (avoids the "youtube-dl failed / not recognized" console noise).
+            c.arg("--ytdl=no");
             c.arg("--force-window=immediate");
             c.arg(&url);
+            // Don't pop a console window alongside mpv on Windows.
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
             c.spawn()
                 .map(|_| "mpv".to_string())
                 .map_err(|e| format!("Found mpv at {mpv} but it failed to launch: {e}"))

@@ -45,6 +45,10 @@ function bestByQuality(releases) {
   return [...(releases || [])].sort((a, b) => (rank(b.quality) - rank(a.quality)) || ((b.seeders || 0) - (a.seeders || 0)))[0] || null;
 }
 
+// Indexers match short titles far better than long festival ones, e.g.
+// "Jeanne Dielman, 23, quai du Commerce, 1080 Bruxelles" → "Jeanne Dielman".
+const cleanQuery = (t) => ((t || '').split(/[,:(]/)[0].trim() || (t || ''));
+
 // The "Download" button. Radarr's normal add + auto-search first; but Radarr
 // searches indexers on TMDB's year, so year-mismatched films (e.g. festival
 // premiere vs theatrical release) find nothing. In that case fall back to a
@@ -56,10 +60,10 @@ export async function downloadWithRadarr(imdbId, year) {
   if (res.status === 'available' || !res.yearMismatch || !prowlarrEnabled()) return res;
   let rr, pw;
   try { rr = await searchReleases(imdbId, cfg, { year }); } catch { return res; }
-  if (rr.releases.length > 0) return res;                   // Radarr can find it after all
-  try { pw = await searchProwlarr(rr.title, year); } catch { return res; }
+  if (rr.releases.some((r) => !r.rejected)) return res;     // Radarr can grab one itself
+  try { pw = await searchProwlarr(cleanQuery(rr.title), year); } catch { pw = []; }
   const pick = bestByQuality(pw);
-  if (!pick) return res;                                    // nothing on Prowlarr either
+  if (!pick) return { ...res, prowlarrFound: 0, grabFailed: 'No releases found right now — your indexers returned nothing (they may be temporarily down).' };
   try {
     await pushRelease(pick, cfg);
     return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'prowlarr', grabbed: pick.title };
@@ -105,10 +109,10 @@ export async function getReleases(imdbId, year) {
     return { releases: rr.releases, source: 'radarr' };
   }
   try {
-    const pw = await searchProwlarr(rr.title, year);
+    const pw = await searchProwlarr(cleanQuery(rr.title), year);
     return { releases: pw, source: pw.length ? 'prowlarr' : 'radarr', fallback: true };
   } catch {
-    return { releases: [], source: 'radarr' };   // Prowlarr down → no fallback, not an error
+    return { releases: [], source: 'radarr', fallback: true };   // Prowlarr down → no fallback, not an error
   }
 }
 

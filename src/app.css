@@ -149,6 +149,9 @@ input, button, select { font-family: inherit; }
   background: var(--surface); color: var(--muted); font-size: 13px; cursor: pointer; transition: all .12s;
   display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
 .theme:hover { color: var(--text); border-color: var(--border-strong); }
+.theme.app-upd { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.theme.static { cursor: default; }
+.theme.static:hover { color: var(--muted); border-color: var(--border); }
 
 /* form control (sort select on catalogue) */
 .ctl { padding: 8px 12px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface);

@@ -234,19 +234,24 @@
       if (!response.ok) throw new Error(result.message || 'Radarr could not start this download.');
 
       const title = result.title || displayTitle(film.title);
-      downloadState = result.status === 'available' ? 'available' : 'queued';
-      if (downloadState === 'available') {
-        toast(`“${title}” is already downloaded in Radarr.`, 'info', 4200);
-      } else if (result.via === 'qbittorrent') {
-        toast(`Radarr couldn’t match “${title}”, so it’s downloading via qBittorrent — it’ll import automatically when done.`, 'ok', 7000);
-      } else if (result.via === 'prowlarr') {
-        toast(`Radarr couldn’t find “${title}” on its year — grabbed a Prowlarr release instead.`, 'ok', 5400);
-      } else if (result.grabFailed) {
-        toast(`Found ${result.prowlarrFound} Prowlarr release(s) for “${title}”, but Radarr couldn’t auto-grab: ${result.grabFailed}`, 'error', 9000);
-      } else if (result.alreadyAdded) {
-        toast(`Radarr is searching for “${title}”.`, 'ok', 4200);
+      if (result.grabFailed) {
+        // Nothing was actually grabbed — don't pretend it's queued.
+        downloadState = 'idle';
+        const msg = result.prowlarrFound ? `Found ${result.prowlarrFound} release(s) but couldn’t auto-grab: ${result.grabFailed}` : result.grabFailed;
+        toast(msg, 'error', 9000);
       } else {
-        toast(`Added “${title}” to Radarr and started a search.`, 'ok', 4200);
+        downloadState = result.status === 'available' ? 'available' : 'queued';
+        if (downloadState === 'available') {
+          toast(`“${title}” is already downloaded in Radarr.`, 'info', 4200);
+        } else if (result.via === 'qbittorrent') {
+          toast(`Radarr couldn’t match “${title}”, so it’s downloading via qBittorrent — it’ll import automatically when done.`, 'ok', 7000);
+        } else if (result.via === 'prowlarr') {
+          toast(`Radarr couldn’t find “${title}” on its year — grabbed a Prowlarr release instead.`, 'ok', 5400);
+        } else if (result.alreadyAdded) {
+          toast(`Radarr is searching for “${title}”.`, 'ok', 4200);
+        } else {
+          toast(`Added “${title}” to Radarr and started a search.`, 'ok', 4200);
+        }
       }
       loadRadarr(film.id_tspdt); loadWatch(film.id_tspdt);
     } catch (cause) {
@@ -487,8 +492,8 @@
         <button class="btn" class:primary={!watchable} onclick={downloadFilm} disabled={dlBtn.disabled} aria-busy={dlBtn.spin}><Icon name={dlBtn.icon} size={16} spin={dlBtn.spin} /> {dlBtn.label}</button>
         {#if inLibrary}
           <div class="watch-split has-caret" bind:this={dlSplitEl}>
-            <a class="btn ghost2" href="/api/file/{film.id_tspdt}" download><Icon name="download" size={16} /> Save a copy</a>
-            <button class="btn ghost2 caret" aria-label="Copy options" aria-expanded={dlMenu} onclick={openDlMenu}><Icon name="chevron" size={15} /></button>
+            <a class="btn" href="/api/file/{film.id_tspdt}" download><Icon name="download" size={16} /> Save a copy</a>
+            <button class="btn caret" aria-label="Copy options" aria-expanded={dlMenu} onclick={openDlMenu}><Icon name="chevron" size={15} /></button>
             {#if dlMenu}
               <div class="watch-menu" role="menu">
                 <a class="wm-item" href="/api/file/{film.id_tspdt}" download onclick={() => dlMenu = false}><Icon name="download" size={14} /> Download file (best encode)</a>
@@ -507,8 +512,8 @@
             {/if}
           </div>
         {/if}
-        <button class="btn" class:primary={!watchable} class:ghost2={watchable} onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
-        {#if ready && meta.trailer}<a class="btn ghost2" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
+        <button class="btn" class:primary={!watchable} onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching…' : 'Choose release'}</button>
+        {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
 
       {#if !isTauri && !hideNudge}
@@ -737,7 +742,7 @@
   .cert-item { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .cert-item b { color: var(--faint); font-weight: 600; margin-right: 4px; }
 
-  .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+  .cta { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
 
   /* "Get the app" nudge — the browser player is a fallback; the app is best. */
   .app-nudge { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; margin: 16px 0 2px; padding: 12px 14px;
@@ -770,7 +775,8 @@
     color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; text-decoration: none;
     display: inline-flex; align-items: center; gap: 8px; transition: transform .12s, border-color .12s; }
   .btn:hover:not(:disabled) { border-color: var(--accent); transform: translateY(-1px); }
-  .btn:disabled { opacity: .55; cursor: progress; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn[aria-busy="true"] { cursor: progress; }        /* only while actually working */
   .btn.primary { background: linear-gradient(120deg, var(--accent), color-mix(in srgb, var(--accent) 70%, #d98324));
     color: var(--accent-ink); border: none; box-shadow: 0 8px 24px color-mix(in srgb, var(--accent) 30%, transparent); }
   /* Tertiary (e.g. Trailer): same size, visually recessive so it doesn't compete. */

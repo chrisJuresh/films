@@ -20,6 +20,8 @@
   let themeName = $state('dark');
   let searchFocused = $state(false);
   let menuOpen = $state(false);          // mobile filter drawer
+  let isTauri = $state(false);           // running in the desktop app?
+  let update = $state(null);             // { available, latest, url } from GitHub releases
 
   const closeMenu = () => (menuOpen = false);
 
@@ -43,8 +45,18 @@
     const mq = window.matchMedia('(min-width: 821px)');
     const onWide = (e) => { if (e.matches) menuOpen = false; };
     mq.addEventListener('change', onWide);
+    // Desktop app: surface an update if GitHub has a newer release.
+    const tauri = window.__TAURI__;
+    if (tauri?.core?.invoke) {
+      isTauri = true;
+      tauri.core.invoke('check_update').then((u) => { update = u; }).catch(() => {});
+    }
     return () => mq.removeEventListener('change', onWide);
   });
+  function openRelease() {
+    const url = update?.url || 'https://github.com/chrisJuresh/films/releases/latest';
+    window.__TAURI__?.core?.invoke('open_in_player', { url, prefer: 'default' }).catch(() => {});
+  }
 
   const sel = (key) => ($page.url.searchParams.get(key) || '').split(',').filter(Boolean);
   const isSel = (key, val) => sel(key).includes(String(val));
@@ -251,9 +263,17 @@
           <span>{userEmail}</span>
         </div>
       {/if}
-      <a class="theme" href="https://github.com/chrisJuresh/films/releases/latest" target="_blank" rel="noopener" title="Download the desktop app — opens films in mpv / your default player">
-        <Icon name="monitor" size={15} /> Desktop app
-      </a>
+      {#if isTauri}
+        {#if update?.available}
+          <button class="theme app-upd" onclick={openRelease} title="A newer version is available — click to download"><Icon name="download" size={15} /> Update · v{update.latest}</button>
+        {:else if update}
+          <span class="theme static" title="Desktop app v{update.current}"><Icon name="monitor" size={15} /> App v{update.current}</span>
+        {/if}
+      {:else}
+        <a class="theme" href="https://github.com/chrisJuresh/films/releases/latest" target="_blank" rel="noopener" title="Download the desktop app — opens films in mpv / your default player">
+          <Icon name="monitor" size={15} /> Desktop app
+        </a>
+      {/if}
       <button class="theme" onclick={toggleTheme} title="Toggle theme">
         {#if themeName === 'light'}<Icon name="sun" size={15} /> Light{:else}<Icon name="moon" size={15} /> Dark{/if}
       </button>
