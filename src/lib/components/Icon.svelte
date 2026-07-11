@@ -21,6 +21,8 @@
     user:      '<circle cx="12" cy="8" r="4"/><path d="M4 20a8 8 0 0 1 16 0"/>',
     star:      '<path d="M12 3.5l2.6 5.7 6.1.6-4.6 4 1.4 6-5.5-3.2L6 19.8l1.4-6-4.6-4 6.1-.6z" fill="currentColor" stroke="none"/>',
     alert:     '<path d="M10.3 4 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    up:        '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
+    chevron:   '<path d="m6 9 6 6 6-6"/>',
   };
 </script>
 

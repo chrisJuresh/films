@@ -35,6 +35,38 @@
   let grabbing = $state(null);        // guid of the release currently being grabbed
   let cancelling = $state(false);
   let releasesFallback = $state(false); // results came from the Prowlarr year-fallback
+  let sortBy = $state('quality');     // release sort: 'quality' | 'seeders' | 'size'
+  let watchMenu = $state(false);      // Watch split-button dropdown open?
+  let splitEl;                        // the watch split container (for click-away)
+
+  // Resolution rank so we can sort/mark quality across Radarr ("Bluray-1080p")
+  // and Prowlarr ("1080p") naming alike.
+  function qRank(q) {
+    const s = (q || '').toLowerCase();
+    if (s.includes('2160') || s.includes('4k') || s.includes('uhd')) return 4;
+    if (s.includes('1080')) return 3;
+    if (s.includes('720')) return 2;
+    if (s.includes('480') || s.includes('dvd') || s.includes(' sd')) return 1;
+    return 0;
+  }
+  let sortedReleases = $derived.by(() => {
+    const arr = [...(releases || [])];
+    const seed = (a, b) => (b.seeders || 0) - (a.seeders || 0);
+    const qual = (a, b) => qRank(b.quality) - qRank(a.quality);
+    if (sortBy === 'seeders') arr.sort((a, b) => seed(a, b) || qual(a, b));
+    else if (sortBy === 'size') arr.sort((a, b) => (b.size || 0) - (a.size || 0) || qual(a, b));
+    else arr.sort((a, b) => qual(a, b) || ((b.score || 0) - (a.score || 0)) || seed(a, b));
+    return arr;
+  });
+  // Approximates what Radarr's auto-grab ("Download") would pick: the best
+  // non-rejected release by quality, then custom-format score, then seeders.
+  let autoPickGuid = $derived.by(() => {
+    const ok = (releases || []).filter((r) => !r.rejected);
+    if (!ok.length) return null;
+    return [...ok].sort((a, b) =>
+      (qRank(b.quality) - qRank(a.quality)) || ((b.score || 0) - (a.score || 0)) || ((b.seeders || 0) - (a.seeders || 0))
+    )[0]?.guid || null;
+  });
 
   let loadedId;
   $effect(() => {
@@ -43,7 +75,7 @@
     if (loadedId === id) return;
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
-    grabbing = null; cancelling = false; releasesFallback = false;
+    grabbing = null; cancelling = false; releasesFallback = false; sortBy = 'quality'; watchMenu = false;
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
@@ -69,12 +101,17 @@
   // in a plain browser, play in-browser via the iGPU stream.
   function watchFilm() {
     if (!(watchInfo?.hasFile || watchInfo?.encoded)) {
-      const msg = radarr?.queue ? 'Still downloading — not ready to watch yet.'
+      const msg = radarr?.hasFile ? 'Downloaded in Radarr, but this server can’t reach the file yet (media mount).'
+        : radarr?.queue ? 'Still downloading — not ready to watch yet.'
         : radarr?.present ? 'In Radarr, but not downloaded yet — start a search or pick a release.'
         : 'Not in the library yet — hit Download first.';
-      toast(msg, 'info', 3600);
+      toast(msg, 'info', 4200);
       return;
     }
+    openInPlayer();   // default: native (mpv) under Tauri, else in-browser
+  }
+  // Open in the native player (Tauri → mpv/OS default) or fall back to browser.
+  function openInPlayer() {
     const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
     if (t?.core?.invoke) {
       const url = new URL(`/api/stream/${film.id_tspdt}`, window.location.origin).href;
@@ -85,6 +122,19 @@
     }
     openPlayer();
   }
+  // The specific "watch this way" options behind the Watch button's caret.
+  let watchOptions = $derived.by(() => {
+    const o = [];
+    if (!watchInfo || !(watchInfo.hasFile || watchInfo.encoded)) return o;
+    if (isTauri) o.push({ label: playerInfo?.mpv ? 'Open in mpv' : 'Open in default player', act: openInPlayer });
+    if (watchInfo.browser) o.push({ label: watchInfo.encoded ? 'Play encoded copy (browser)' : 'Play in browser', act: openPlayer });
+    else if (watchInfo.hasFile) o.push({ label: 'Stream in browser · iGPU transcode', act: openPlayer });
+    if (watchInfo.hasFile && !watchInfo.encoded && watchInfo.encode?.state !== 'running')
+      o.push({ label: 'Encode a browser copy · iGPU', act: startEncode });
+    if (watchInfo.encoded) o.push({ label: 'Download encoded copy', href: `/api/encode/${film.id_tspdt}/download` });
+    return o;
+  });
+  function pickWatch(o) { watchMenu = false; if (o.act) o.act(); }
   async function downloadFilm() {
     if (downloadState !== 'idle') return;
     downloadState = 'loading';
@@ -245,6 +295,7 @@
 </script>
 
 <svelte:head><title>{displayTitle(film.title)} ({film.year}) · Film Index</title></svelte:head>
+<svelte:window onclick={(e) => { if (watchMenu && splitEl && !splitEl.contains(e.target)) watchMenu = false; }} />
 
 <div class="backdrop" class:img={ready && meta.backdrop}
      style={ready && meta.backdrop ? `background-image:url("${meta.backdrop}")` : `background:${gradientFor(film.title)}`}></div>
@@ -283,7 +334,23 @@
       </div>
 
       <div class="cta">
-        <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
+        <div class="watch-split" bind:this={splitEl}>
+          <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
+          {#if watchOptions.length > 1}
+            <button class="btn primary caret" aria-label="Choose how to watch" aria-expanded={watchMenu} onclick={() => watchMenu = !watchMenu}><Icon name="chevron" size={15} /></button>
+          {/if}
+          {#if watchMenu}
+            <div class="watch-menu" role="menu">
+              {#each watchOptions as o}
+                {#if o.href}
+                  <a class="wm-item" role="menuitem" href={o.href} onclick={() => watchMenu = false}>{o.label}</a>
+                {:else}
+                  <button class="wm-item" role="menuitem" onclick={() => pickWatch(o)}>{o.label}</button>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </div>
         <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadState === 'loading' ? 'sync' : downloadIcon} size={16} spin={downloadState === 'loading'} /> {downloadLabel}</button>
         <button class="btn" onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
@@ -363,16 +430,37 @@
 
   {#if releases}
     <section class="block releases">
-      <div class="section-h">Releases · pick one to grab</div>
-      {#if releasesFallback}<p class="rr-meta">Radarr found nothing on its year, so these are from a Prowlarr search on {film.year}. Grabbing pushes the release back through Radarr so it still imports.</p>{/if}
-      {#if releases.length === 0}
+      <div class="rel-head">
+        <div class="section-h">Releases · {sortedReleases.length} found</div>
+        {#if sortedReleases.length > 1}
+          <div class="rel-sort" role="group" aria-label="Sort releases">
+            <span>Sort</span>
+            <button class:on={sortBy === 'quality'} onclick={() => sortBy = 'quality'}>Quality</button>
+            <button class:on={sortBy === 'seeders'} onclick={() => sortBy = 'seeders'}>Seeders</button>
+            <button class:on={sortBy === 'size'} onclick={() => sortBy = 'size'}>Size</button>
+          </div>
+        {/if}
+      </div>
+      {#if releasesFallback}<p class="rr-meta">Radarr found nothing on its year, so these are from a Prowlarr search on {film.year} — grabbing pushes the release back through Radarr so it still imports.</p>{/if}
+      {#if radarr?.hasFile}<p class="rr-meta">Already in your library — grabbing fetches another release (Radarr treats it as an upgrade/replace).</p>{/if}
+      {#if sortedReleases.length === 0}
         <p class="rr-meta">No releases found{releasesFallback ? '' : ' — Radarr searches on TMDB’s year for this film'}.</p>
       {:else}
-        {#each releases as r}
-          <div class="rel" class:rej={r.rejected}>
+        {#each sortedReleases as r (r.guid)}
+          <div class="rel" class:rej={r.rejected} class:pick={r.guid === autoPickGuid}>
+            <div class="seeders" class:hot={(r.seeders || 0) >= 10} class:cold={(r.seeders || 0) === 0} title="{r.seeders ?? '?'} seeders">
+              <Icon name="up" size={12} stroke={2.6} />
+              <b>{r.seeders ?? '–'}</b>
+              <span>seed</span>
+            </div>
             <div class="rel-info">
-              <div class="rel-title">{r.title}{#if r.source === 'prowlarr'}<span class="rel-tag">Prowlarr</span>{/if}</div>
-              <div class="rel-sub">{[r.quality, r.size ? gb(r.size) : null, r.seeders != null ? r.seeders + ' seeders' : null, r.languages.join('/'), r.indexer].filter(Boolean).join(' · ')}{r.score ? ' · CF ' + r.score : ''}</div>
+              <div class="rel-title">
+                {#if r.quality}<span class="qbadge">{r.quality}</span>{/if}
+                <span class="rel-name">{r.title}</span>
+                {#if r.guid === autoPickGuid}<span class="rel-tag pick" title="What the Download button would grab">Radarr’s pick</span>{/if}
+                {#if r.source === 'prowlarr'}<span class="rel-tag">Prowlarr</span>{/if}
+              </div>
+              <div class="rel-sub">{[r.size ? gb(r.size) : null, r.languages.join('/'), r.indexer, r.protocol].filter(Boolean).join(' · ')}{r.score ? ' · CF ' + r.score : ''}</div>
               {#if r.rejected && r.rejections.length}<div class="rel-rej">{r.rejections.slice(0, 2).join('; ')}</div>{/if}
             </div>
             <button class="btn sm" class:warn={r.rejected} disabled={!!grabbing} aria-busy={grabbing === r.guid} onclick={() => grab(r)}>
@@ -510,16 +598,54 @@
   .player video { width: 100%; max-height: 78vh; border-radius: 16px; background: #000;
     border: 1px solid var(--border-strong); box-shadow: var(--shadow); display: block; }
 
-  .releases .rel { display: flex; align-items: center; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .rel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .rel-sort { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .rel-sort button { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border); background: transparent;
+    color: var(--muted); font-size: 12px; cursor: pointer; transition: all .12s ease; }
+  .rel-sort button:hover { color: var(--text); }
+  .rel-sort button.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+
+  .releases .rel { display: flex; align-items: center; gap: 13px; padding: 11px 12px; border-radius: 12px;
+    border: 1px solid transparent; border-bottom: 1px solid var(--border); }
+  .releases .rel:last-child { border-bottom: 1px solid transparent; }
+  .rel.pick { background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border)); }
+  .rel.rej { opacity: .72; }
+
+  .seeders { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0;
+    min-width: 52px; padding: 5px 6px; border-radius: 9px; background: var(--surface); border: 1px solid var(--border);
+    color: var(--muted); line-height: 1; }
+  .seeders b { font-size: 15px; color: var(--text); font-variant-numeric: tabular-nums; margin-top: 1px; }
+  .seeders span { font-size: 8.5px; text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+  .seeders.hot { color: var(--free); border-color: color-mix(in srgb, var(--free) 45%, var(--border));
+    background: color-mix(in srgb, var(--free) 10%, transparent); }
+  .seeders.hot b { color: var(--free); }
+  .seeders.cold { opacity: .55; }
+
   .rel-info { flex: 1; min-width: 0; }
-  .rel-title { font-size: 13.5px; word-break: break-word; line-height: 1.3; }
-  .rel-tag { margin-left: 7px; font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
-    color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 5px; padding: 1px 5px; vertical-align: middle; }
-  .rel-sub { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .rel-title { font-size: 13px; line-height: 1.35; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .rel-name { word-break: break-word; }
+  .qbadge { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; letter-spacing: .01em;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+  .rel-tag { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); border-radius: 5px; padding: 1px 6px; }
+  .rel-tag.pick { color: var(--free); border-color: color-mix(in srgb, var(--free) 45%, var(--border));
+    background: color-mix(in srgb, var(--free) 12%, transparent); }
+  .rel-sub { font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
   .rel-rej { font-size: 11.5px; color: #e5675c; margin-top: 3px; }
-  .rel.rej { opacity: .7; }
-  .btn.sm { padding: 7px 14px; font-size: 13px; flex: none; }
+  .btn.sm { padding: 7px 14px; font-size: 13px; flex: none; align-self: center; }
   .btn.sm.warn { color: #d9a441; border-color: color-mix(in srgb, #d9a441 45%, var(--border)); }
+
+  /* Watch split button + its "how to watch" dropdown */
+  .watch-split { position: relative; display: inline-flex; }
+  .watch-split .btn.primary:first-child { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+  .watch-split .btn.primary.caret { border-top-left-radius: 3px; border-bottom-left-radius: 3px;
+    padding-left: 9px; padding-right: 9px; margin-left: 2px; }
+  .watch-menu { position: absolute; top: calc(100% + 7px); left: 0; z-index: 40; min-width: 234px; padding: 6px;
+    background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: 13px; box-shadow: var(--shadow); }
+  .wm-item { display: block; width: 100%; text-align: left; padding: 9px 11px; border-radius: 8px; border: 0;
+    background: transparent; color: var(--text); font-size: 13px; cursor: pointer; text-decoration: none; white-space: nowrap; }
+  .wm-item:hover { background: var(--surface); }
 
   .block { margin-top: 36px; border-top: 1px solid var(--border); padding-top: 26px; }
   .section-h { font-size: 11px; text-transform: uppercase; letter-spacing: .13em; color: var(--faint); margin: 0 0 14px; }
