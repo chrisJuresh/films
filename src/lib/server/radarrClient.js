@@ -76,16 +76,12 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
     throw new RadarrError('Radarr could not find this film from its IMDb ID.', 422);
   }
 
-  // Radarr SEARCHES indexers using the movie's PRIMARY year, which comes from
-  // TMDB and can differ from the year releases are actually tagged with (e.g.
-  // TMDB 1976 vs the 1975 our catalogue and the indexers use — secondaryYear
-  // only affects matching, not the search term). So when they differ we make
-  // Radarr search OUR year and keep TMDB's as secondaryYear, so it searches the
-  // year the release sites use yet still matches releases tagged with either.
-  const tmdbYear = lookup.year;
-  const catYear = Number.parseInt(hints.year, 10);
-  const useAlt = Number.isInteger(catYear) && catYear !== tmdbYear;
-
+  // NOTE: we do NOT try to override the movie's year. Radarr searches indexers
+  // on the PRIMARY year, which is owned by TMDB — a PUT changing `year`/
+  // `secondaryYear` is accepted (HTTP 202) but silently ignored, and a metadata
+  // refresh keeps TMDB's value (verified against live Radarr). So when TMDB's
+  // year differs from the year a release is tagged with, the auto-search can
+  // miss it; the interactive picker is the escape hatch for those.
   const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
   const movie = Array.isArray(existing) ? existing[0] : null;
 
@@ -94,15 +90,6 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
   }
 
   if (movie?.id) {
-    // Point an already-added movie's search at our year. Radarr searches
-    // indexers with the movie's primary year, so this must land BEFORE the
-    // search. Use the full movie resource (the list form can be rejected by
-    // PUT) and only proceed to search once it's applied.
-    if (useAlt && movie.year !== catYear) {
-      const full = await requestRadarr(settings, `movie/${movie.id}`, {}, fetchImpl);
-      await requestRadarr(settings, `movie/${movie.id}`,
-        { method: 'PUT', body: { ...full, year: catYear, secondaryYear: tmdbYear } }, fetchImpl);
-    }
     await requestRadarr(settings, 'command', {
       method: 'POST',
       body: { name: 'MoviesSearch', movieIds: [movie.id] }
@@ -114,7 +101,6 @@ export async function downloadWithRadarrClient(imdbId, settings, fetchImpl = glo
     method: 'POST',
     body: {
       ...lookup,
-      ...(useAlt ? { year: catYear, secondaryYear: tmdbYear } : {}),
       qualityProfileId: settings.qualityProfileId,
       rootFolderPath: settings.rootFolderPath,
       monitored: true,
@@ -178,21 +164,15 @@ export async function searchReleases(imdbId, settings, hints = {}, fetchImpl = g
   if (!/^tt\d{7,10}$/i.test(imdbId || '')) throw new RadarrError('This film has no usable IMDb ID.', 422);
   const lookup = await requestRadarr(settings, `movie/lookup/imdb?imdbId=${encodeURIComponent(imdbId)}`, {}, fetchImpl);
   if (!lookup?.tmdbId) throw new RadarrError('Radarr could not find this film.', 422);
-  const tmdbYear = lookup.year;
-  const catYear = Number.parseInt(hints.year, 10);
-  const useAlt = Number.isInteger(catYear) && catYear !== tmdbYear;
 
   const existing = await requestRadarr(settings, `movie?tmdbId=${lookup.tmdbId}`, {}, fetchImpl);
   let movie = Array.isArray(existing) ? existing[0] : null;
   if (!movie?.id) {
     movie = await requestRadarr(settings, 'movie', { method: 'POST', body: {
-      ...lookup, ...(useAlt ? { year: catYear, secondaryYear: tmdbYear } : {}),
+      ...lookup,
       qualityProfileId: settings.qualityProfileId, rootFolderPath: settings.rootFolderPath,
       monitored: true, minimumAvailability: 'released', addOptions: { ...(lookup.addOptions || {}), searchForMovie: false }
     } }, fetchImpl);
-  } else if (useAlt && movie.year !== catYear) {
-    const full = await requestRadarr(settings, `movie/${movie.id}`, {}, fetchImpl);
-    movie = await requestRadarr(settings, `movie/${movie.id}`, { method: 'PUT', body: { ...full, year: catYear, secondaryYear: tmdbYear } }, fetchImpl);
   }
 
   const rel = await requestRadarr(settings, `release?movieId=${movie.id}`, {}, fetchImpl);

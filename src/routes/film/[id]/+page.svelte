@@ -32,6 +32,8 @@
   let savedAt = 0;
   let releases = $state(null);        // interactive-search candidates (pick a release)
   let releasesLoading = $state(false);
+  let grabbing = $state(null);        // guid of the release currently being grabbed
+  let cancelling = $state(false);
 
   let loadedId;
   $effect(() => {
@@ -40,6 +42,7 @@
     if (loadedId === id) return;
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
+    grabbing = null; cancelling = false;
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
     fetch(`/api/meta/${id}`).then((r) => r.json())
@@ -65,7 +68,10 @@
   // in a plain browser, play in-browser via the iGPU stream.
   function watchFilm() {
     if (!(watchInfo?.hasFile || watchInfo?.encoded)) {
-      toast('Not in the library yet — hit Download first.', 'info', 3400);
+      const msg = radarr?.queue ? 'Still downloading — not ready to watch yet.'
+        : radarr?.present ? 'In Radarr, but not downloaded yet — start a search or pick a release.'
+        : 'Not in the library yet — hit Download first.';
+      toast(msg, 'info', 3600);
       return;
     }
     const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
@@ -103,6 +109,8 @@
     }
   }
   async function cancelDownload() {
+    if (cancelling) return;
+    cancelling = true;
     try {
       const r = await fetch(`/api/radarr/${film.id_tspdt}`, { method: 'DELETE' });
       const d = await r.json().catch(() => ({}));
@@ -111,6 +119,7 @@
       downloadState = 'idle';
       loadRadarr(film.id_tspdt);
     } catch (e) { toast(e.message || 'Could not cancel the download.', 'error', 4200); }
+    finally { cancelling = false; }
   }
   // Interactive search: let the user pick a release instead of Radarr auto-grab.
   async function chooseRelease() {
@@ -124,6 +133,8 @@
     finally { releasesLoading = false; }
   }
   async function grab(rel) {
+    if (grabbing) return;
+    grabbing = rel.guid;
     try {
       const r = await fetch(`/api/radarr/${film.id_tspdt}/releases`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -135,6 +146,7 @@
       releases = null; downloadState = 'queued';
       loadRadarr(film.id_tspdt); loadWatch(film.id_tspdt);
     } catch (e) { toast(e.message || 'Could not grab that release.', 'error', 4600); }
+    finally { grabbing = null; }
   }
   async function setKind(kind, on) {
     try {
@@ -267,8 +279,8 @@
 
       <div class="cta">
         <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
-        <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadIcon} size={16} /> {downloadLabel}</button>
-        <button class="btn" onclick={chooseRelease} disabled={releasesLoading}><Icon name="search" size={15} /> {releasesLoading ? 'Searching…' : 'Choose release'}</button>
+        <button class="btn" onclick={downloadFilm} disabled={downloadState !== 'idle'} aria-busy={downloadState === 'loading'}><Icon name={downloadState === 'loading' ? 'sync' : downloadIcon} size={16} spin={downloadState === 'loading'} /> {downloadLabel}</button>
+        <button class="btn" onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
 
@@ -293,7 +305,7 @@
             </div>
             {#if radarr.queue.error}<div class="rr-err">{radarr.queue.error}</div>{/if}
             {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">{[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
-            <button class="rr-cancel" onclick={cancelDownload}>Cancel download</button>
+            <button class="rr-cancel" onclick={cancelDownload} disabled={cancelling} aria-busy={cancelling}>{cancelling ? 'Cancelling…' : 'Cancel download'}</button>
           {:else if radarr.queue}
             <div class="rr-row">
               <span class="rr-label">{radarr.queue.state === 'importPending' || radarr.queue.state === 'importing' ? 'Importing' : 'Downloading'}{radarr.queue.quality && radarr.queue.quality !== 'Unknown' ? ' · ' + radarr.queue.quality : ''}</span>
@@ -302,7 +314,7 @@
             <div class="rr-bar" class:indef={radarr.queue.progress == null}><span style="width:{radarr.queue.progress ?? 100}%"></span></div>
             {#if radarr.queue.health === 'warning' && radarr.queue.error}<div class="rr-warn"><Icon name="alert" size={12} /> {radarr.queue.error}</div>{/if}
             {#if radarr.queue.client || radarr.queue.indexer}<div class="rr-meta">via {[radarr.queue.client, radarr.queue.indexer, radarr.queue.protocol].filter(Boolean).join(' · ')}</div>{/if}
-            <button class="rr-cancel" onclick={cancelDownload}>Cancel download</button>
+            <button class="rr-cancel" onclick={cancelDownload} disabled={cancelling} aria-busy={cancelling}>{cancelling ? 'Cancelling…' : 'Cancel download'}</button>
           {:else if radarr.hasFile}
             <div class="rr-row">
               <span class="rr-label ok"><Icon name="check" size={14} stroke={2.3} /> In your library</span>
@@ -357,7 +369,9 @@
               <div class="rel-sub">{[r.quality, r.size ? gb(r.size) : null, r.seeders != null ? r.seeders + ' seeders' : null, r.languages.join('/'), r.indexer].filter(Boolean).join(' · ')}{r.score ? ' · CF ' + r.score : ''}</div>
               {#if r.rejected && r.rejections.length}<div class="rel-rej">{r.rejections.slice(0, 2).join('; ')}</div>{/if}
             </div>
-            <button class="btn sm" class:warn={r.rejected} onclick={() => grab(r)}>{r.rejected ? 'Grab anyway' : 'Grab'}</button>
+            <button class="btn sm" class:warn={r.rejected} disabled={!!grabbing} aria-busy={grabbing === r.guid} onclick={() => grab(r)}>
+              {#if grabbing === r.guid}<Icon name="sync" size={13} spin /> Grabbing…{:else}{r.rejected ? 'Grab anyway' : 'Grab'}{/if}
+            </button>
           </div>
         {/each}
       {/if}

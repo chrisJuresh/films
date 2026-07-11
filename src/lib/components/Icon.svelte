@@ -1,7 +1,7 @@
 <script>
   // Small, consistent inline-SVG icon set (thin-stroke, currentColor) so buttons
   // look professional instead of relying on OS emoji/unicode glyphs.
-  let { name, size = 18, stroke = 1.9, fill = 'none' } = $props();
+  let { name, size = 18, stroke = 1.9, fill = 'none', spin = false } = $props();
   const ICONS = {
     play:      '<path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none"/>',
     download:  '<path d="M12 3v11.5"/><path d="m7.5 10 4.5 4.5 4.5-4.5"/><path d="M5 20h14"/>',
@@ -24,10 +24,12 @@
   };
 </script>
 
-<svg class="icon" width={size} height={size} viewBox="0 0 24 24" {fill} stroke="currentColor"
+<svg class="icon" class:spin width={size} height={size} viewBox="0 0 24 24" {fill} stroke="currentColor"
      stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"
 >{@html ICONS[name] || ''}</svg>
 
 <style>
   .icon { display: inline-block; vertical-align: middle; flex: none; }
+  .icon.spin { animation: icon-spin 0.8s linear infinite; transform-origin: 50% 50%; }
+  @keyframes icon-spin { to { transform: rotate(360deg); } }
 </style>
