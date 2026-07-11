@@ -8,13 +8,17 @@
 
   let isTauri = $state(false);        // running inside the Tauri desktop app?
   let playerInfo = $state(null);      // { os, arch, mpv } from the desktop app
+  let hideNudge = $state(true);       // hide the "get the app" nudge (until we know)
   onMount(() => {
     const t = window.__TAURI__;
     if (t?.core?.invoke) {
       isTauri = true;
       t.core.invoke('player_info').then((i) => { playerInfo = i; }).catch(() => {});
+    } else {
+      hideNudge = localStorage.getItem('films-hide-app-nudge') === '1';
     }
   });
+  function dismissNudge() { hideNudge = true; try { localStorage.setItem('films-hide-app-nudge', '1'); } catch { /* ignore */ } }
 
   let { data } = $props();
   let film = $derived(data.film);
@@ -94,6 +98,9 @@
   let seen = $derived(status === 'seen' || lbWatched);
   let rewatch = $derived(status === 'rewatch');
   let unfinished = $derived(status === 'unfinished');
+  // Something is playable now → Watch is the primary action; otherwise Download /
+  // Choose release are the coloured (actionable) ones.
+  let watchable = $derived(!!(watchInfo?.hasFile || watchInfo?.encoded));
   let downloadLabel = $derived(
     downloadState === 'loading' ? 'Sending…' :
     downloadState === 'queued' ? 'Requested' :
@@ -122,7 +129,8 @@
   function openInPlayer() {
     const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
     if (t?.core?.invoke) {
-      const url = new URL(`/api/stream/${film.id_tspdt}`, window.location.origin).href;
+      // Native player gets the ORIGINAL file (best quality — no lossy re-encode).
+      const url = new URL(`/api/source/${film.id_tspdt}`, window.location.origin).href;
       t.core.invoke('open_in_player', { url, title: displayTitle(film.title) })
         .then((used) => toast(`Opening in ${used || 'your player'}…`, 'ok'))
         .catch((e) => toast('Could not open the player: ' + e, 'error', 4600));
@@ -409,9 +417,9 @@
 
       <div class="cta">
         <div class="watch-split" class:has-caret={watchOptions.length > 1} bind:this={splitEl}>
-          <button class="btn primary" onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
+          <button class="btn" class:primary={watchable} onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
           {#if watchOptions.length > 1}
-            <button class="btn primary caret" aria-label="Choose how to watch" aria-expanded={watchMenu} onclick={() => watchMenu = !watchMenu}><Icon name="chevron" size={15} /></button>
+            <button class="btn caret" class:primary={watchable} aria-label="Choose how to watch" aria-expanded={watchMenu} onclick={() => watchMenu = !watchMenu}><Icon name="chevron" size={15} /></button>
           {/if}
           {#if watchMenu}
             <div class="watch-menu" role="menu">
@@ -447,11 +455,23 @@
             {/if}
           </div>
         {:else}
-          <button class="btn" onclick={downloadFilm} disabled={dlBtn.disabled} aria-busy={dlBtn.spin}><Icon name={dlBtn.icon} size={16} spin={dlBtn.spin} /> {dlBtn.label}</button>
+          <button class="btn" class:primary={!watchable} onclick={downloadFilm} disabled={dlBtn.disabled} aria-busy={dlBtn.spin}><Icon name={dlBtn.icon} size={16} spin={dlBtn.spin} /> {dlBtn.label}</button>
         {/if}
-        <button class="btn" onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
+        <button class="btn" class:primary={!watchable} onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
+
+      {#if !isTauri && !hideNudge}
+        <div class="app-nudge">
+          <div class="app-nudge-ic"><Icon name="monitor" size={17} /></div>
+          <div class="app-nudge-txt">
+            <b>Best picture quality is in the desktop app</b>
+            <span>In-browser playback transcodes on the fly — lower quality and no seeking. The app plays the original file in mpv: full resolution, instant seeking, tuned for your display.</span>
+          </div>
+          <a class="app-nudge-cta" href="https://github.com/chrisJuresh/films/releases/latest" target="_blank" rel="noopener">Get the app</a>
+          <button class="app-nudge-x" onclick={dismissNudge} aria-label="Dismiss"><Icon name="x" size={14} /></button>
+        </div>
+      {/if}
 
       <div class="actions">
         <button class="ghost" class:on={watchlisted} onclick={toggleWatchlist}><Icon name="heart" size={15} /> {watchlisted ? 'On watchlist' : 'Watchlist'}</button>
@@ -662,6 +682,22 @@
   .cert-item b { color: var(--faint); font-weight: 600; margin-right: 4px; }
 
   .cta { display: flex; gap: 12px; flex-wrap: wrap; }
+
+  /* "Get the app" nudge — the browser player is a fallback; the app is best. */
+  .app-nudge { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; margin: 16px 0 2px; padding: 12px 14px;
+    border-radius: 13px; border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+    background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent), transparent); }
+  .app-nudge-ic { flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+    color: var(--accent-ink); background: var(--accent); }
+  .app-nudge-txt { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .app-nudge-txt b { font-size: 13.5px; }
+  .app-nudge-txt span { font-size: 12px; color: var(--muted); line-height: 1.4; }
+  .app-nudge-cta { flex: none; padding: 8px 15px; border-radius: 9px; background: var(--accent); color: var(--accent-ink);
+    font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+  .app-nudge-cta:hover { filter: brightness(1.06); }
+  .app-nudge-x { flex: none; width: 26px; height: 26px; border-radius: 999px; border: 0; background: transparent;
+    color: var(--faint); cursor: pointer; display: grid; place-items: center; }
+  .app-nudge-x:hover { color: var(--text); }
   .btn { padding: 13px 22px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2);
     color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; font-family: inherit; text-decoration: none;
     display: inline-flex; align-items: center; gap: 8px; transition: transform .12s, border-color .12s; }

@@ -242,8 +242,9 @@ export function queryFilms(p = {}) {
   // film_download (fd) is global (Radarr's view), not per-user.
   const joins = `LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
      LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
-     LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt`;
-  const joinArgs = [user, user];
+     LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt
+     LEFT JOIN playback pb ON pb.id_tspdt = f.id_tspdt AND pb.cf_user = ?`;
+  const joinArgs = [user, user, user];
   // "seen" spans both trackers; "watchlist" is site-only.
   if (p.status === 'watchlist') where.push("us.status = 'watchlist'");
   else if (p.status === 'seen') where.push("(us.status = 'seen' OR lb.state = 'watched')");
@@ -261,7 +262,8 @@ export function queryFilms(p = {}) {
   const items = db.prepare(
     `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, f.country,
             f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.is_new,
-            us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress
+            us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress,
+            pb.position AS pb_position, pb.duration AS pb_duration
      FROM films f ${joins} WHERE ${wc}
      ORDER BY ${sort} ${order}, f.latest_rank ASC
      LIMIT ? OFFSET ?`

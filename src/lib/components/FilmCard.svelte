@@ -18,6 +18,14 @@
   // Radarr download state (global, not per-user): downloaded|downloading|wanted|error
   let download = $derived(film.download ?? null);
   let dlProgress = $derived(film.download_progress ?? null);   // 0-100 while downloading
+  // Watched progress (your resume position vs the film's runtime), shown when in-progress.
+  let watchedPct = $derived.by(() => {
+    const pos = film.pb_position;
+    if (!pos || pos < 30) return null;
+    const dur = (film.length_min ? film.length_min * 60 : 0) || film.pb_duration;
+    if (!dur || dur < 300 || pos > dur * 1.05) return null;
+    return Math.min(100, Math.round((pos / dur) * 100));
+  });
 
   // Pull real poster art (TMDB) for this card. Rendering is already bounded to
   // ~60 cards per page by the grid's infinite scroll, so a per-card fetch is fine.
@@ -76,6 +84,8 @@
     {/if}
     {#if download === 'downloading' && dlProgress != null}
       <div class="dlbar" title="Downloading · {dlProgress}%"><span style="width:{dlProgress}%"></span></div>
+    {:else if watchedPct != null}
+      <div class="dlbar watched" title="Watched · {watchedPct}%"><span style="width:{watchedPct}%"></span></div>
     {/if}
     <div class="acts">
       <div class="act-row">
@@ -120,6 +130,7 @@
   .dlbar { position: absolute; left: 7px; right: 7px; bottom: 7px; z-index: 2; height: 4px; border-radius: 999px;
     background: rgba(0,0,0,.5); overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.4); }
   .dlbar span { display: block; height: 100%; background: #2f7de1; border-radius: 999px; transition: width .6s ease; }
+  .dlbar.watched span { background: var(--free); }   /* watched progress (resume position) */
 
   /* Permanent status indicators (below the rank). Watchlist/seen are vivid;
      rewatch/unfinished use quieter, desaturated colours -- they're secondary. */
