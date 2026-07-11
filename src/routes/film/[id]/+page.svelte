@@ -479,7 +479,7 @@
 
       <div class="cta">
         <div class="watch-split" class:has-caret={watchOptions.length > 1} bind:this={splitEl}>
-          <button class="btn" class:primary={watchable} onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? (playerInfo?.mpv ? 'Watch in mpv' : 'Watch') : 'Watch'}</button>
+          <button class="btn" class:primary={watchable} onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
           {#if watchOptions.length > 1}
             <button class="btn caret" class:primary={watchable} aria-label="Choose how to watch" aria-expanded={watchMenu} onclick={() => watchMenu = !watchMenu}><Icon name="chevron" size={15} /></button>
           {/if}
