@@ -219,9 +219,9 @@ test('grabRelease posts the chosen release guid + indexer', async () => {
   assert.deepEqual(JSON.parse(mock.calls[0].options.body), { guid: 'abc', indexerId: 3 });
 });
 
-test('pushRelease hands a Prowlarr-sourced release to Radarr via release/push', async () => {
-  const mock = mockFetch(jsonResponse({ approved: true }));
-  const rel = { title: 'Jeanne Dielman 1975 1080p BluRay x264', downloadUrl: 'http://prowlarr/dl/abc',
+test('pushRelease grabs when Radarr maps + approves the release', async () => {
+  const mock = mockFetch(jsonResponse([{ approved: true, movie: { id: 42 } }]));
+  const rel = { title: 'Alien 1979 1080p BluRay x264', downloadUrl: 'http://prowlarr/dl/abc',
     protocol: 'torrent', indexer: '1337x', publishDate: '2024-01-01T00:00:00Z' };
   const r = await pushRelease(rel, settings(), mock.fetch);
   assert.equal(r.grabbed, true);
@@ -235,8 +235,16 @@ test('pushRelease hands a Prowlarr-sourced release to Radarr via release/push', 
   assert.equal(body.indexer, '1337x');
 });
 
+test('pushRelease fails loudly when Radarr can’t map the title to a movie', async () => {
+  const mock = mockFetch(jsonResponse([{ approved: true, rejections: [] }]));   // no movie mapped
+  await assert.rejects(
+    pushRelease({ title: 'Jeanne Dielman 1080 Bruxelles 1975 1080p', downloadUrl: 'http://p/x', protocol: 'torrent' }, settings(), mock.fetch),
+    (e) => e instanceof RadarrError && e.status === 422 && /match it to this film/.test(e.message)
+  );
+});
+
 test('pushRelease falls back to the magnet link and rejects a linkless release', async () => {
-  const mock = mockFetch(jsonResponse({}));
+  const mock = mockFetch(jsonResponse([{ approved: true, movie: { id: 1 } }]));
   await pushRelease({ title: 'X', magnetUrl: 'magnet:?xt=abc', protocol: 'usenet' }, settings(), mock.fetch);
   const body = JSON.parse(mock.calls[0].options.body);
   assert.equal(body.downloadUrl, 'magnet:?xt=abc');

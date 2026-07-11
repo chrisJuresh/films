@@ -216,7 +216,21 @@ export async function pushRelease(release, settings, fetchImpl = globalThis.fetc
     publishDate: release.publishDate || new Date().toISOString()
   };
   if (release.indexer) body.indexer = release.indexer;
-  await requestRadarr(settings, 'release/push', { method: 'POST', body }, fetchImpl);
+  const res = await requestRadarr(settings, 'release/push', { method: 'POST', body }, fetchImpl);
+  // release/push returns the parsed decision(s). Radarr only actually sends it to
+  // the download client when it BOTH maps the title to a movie AND approves it —
+  // an HTTP 200 alone does not mean it grabbed anything.
+  const row = (Array.isArray(res) ? res[0] : res) || {};
+  const mapped = !!(row.movie?.id ?? row.movieId);
+  if (!mapped) {
+    throw new RadarrError(
+      'Radarr accepted the release but could not match it to this film — its title defeats Radarr’s parser (e.g. a number in the name read as a resolution). It can’t be auto-grabbed.',
+      422
+    );
+  }
+  if (row.approved === false) {
+    throw new RadarrError((row.rejections && row.rejections[0]) || 'Radarr rejected this release.', 422);
+  }
   return { grabbed: true };
 }
 

@@ -150,6 +150,8 @@
         toast(`“${title}” is already downloaded in Radarr.`, 'info', 4200);
       } else if (result.via === 'prowlarr') {
         toast(`Radarr couldn’t find “${title}” on its year — grabbed a Prowlarr release instead.`, 'ok', 5400);
+      } else if (result.grabFailed) {
+        toast(`Found ${result.prowlarrFound} Prowlarr release(s) for “${title}”, but Radarr couldn’t auto-grab: ${result.grabFailed}`, 'error', 9000);
       } else if (result.alreadyAdded) {
         toast(`Radarr is searching for “${title}”.`, 'ok', 4200);
       } else {

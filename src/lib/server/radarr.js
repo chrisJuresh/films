@@ -53,15 +53,19 @@ export async function downloadWithRadarr(imdbId, year) {
   const cfg = config();
   const res = await downloadWithRadarrClient(imdbId, cfg, undefined, { year });
   if (res.status === 'available' || !res.yearMismatch || !prowlarrEnabled()) return res;
+  let rr, pw;
+  try { rr = await searchReleases(imdbId, cfg, { year }); } catch { return res; }
+  if (rr.releases.length > 0) return res;                   // Radarr can find it after all
+  try { pw = await searchProwlarr(rr.title, year); } catch { return res; }
+  const pick = bestByQuality(pw);
+  if (!pick) return res;                                    // nothing on Prowlarr either
   try {
-    const rr = await searchReleases(imdbId, cfg, { year });
-    if (rr.releases.length > 0) return res;                 // Radarr can find it after all
-    const pick = bestByQuality(await searchProwlarr(rr.title, year));
-    if (!pick) return res;                                  // nothing on Prowlarr either
     await pushRelease(pick, cfg);
     return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'prowlarr', grabbed: pick.title };
-  } catch {
-    return res;                                             // fallback is best-effort
+  } catch (e) {
+    // Found releases on Prowlarr but Radarr couldn't auto-grab one (e.g. a title
+    // its parser mis-reads). Surface that honestly instead of a silent "Missing".
+    return { ...res, prowlarrFound: pw.length, grabFailed: e?.message || 'Radarr could not grab the release.' };
   }
 }
 
