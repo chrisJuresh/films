@@ -11,7 +11,6 @@
   // before our bundle runs), so the app UI renders on hydration — no flash of the
   // browser version then a swap.
   let isTauri = $state(browser && !!window.__TAURI__?.core?.invoke);
-  let playerInfo = $state(null);      // { os, arch, mpv, mpv_path } from the app
   let hideNudge = $state(true);       // hide the "get the app" nudge (until we know)
   let updateInfo = $state(null);      // { available, latest, url } from GitHub releases
   let localPath = $state(null);       // this film's locally-cached file (app only)
@@ -21,7 +20,6 @@
   onMount(() => {
     const t = window.__TAURI__;
     if (t?.core?.invoke) {
-      t.core.invoke('player_info').then((i) => { playerInfo = i; }).catch(() => {});
       t.core.invoke('check_update').then((u) => { updateInfo = u; }).catch(() => {});
       fetch('/api/app-auth').then((r) => r.json()).then((a) => { cfAuth = a; }).catch(() => {});
     } else {
@@ -184,7 +182,7 @@
     const o = [];
     if (!watchInfo || !(watchInfo.hasFile || watchInfo.encoded)) return o;
     if (isTauri) {
-      o.push({ label: localPath ? 'Play local copy' : 'Open in mpv', hint: localPath ? 'saved on this PC' : (playerInfo?.mpv ? 'best quality — the original file' : 'mpv not detected'), act: () => playInApp('mpv') });
+      o.push({ label: localPath ? 'Play local copy' : 'Open in mpv', hint: localPath ? 'saved on this PC' : 'best quality — the original file', act: () => playInApp('mpv') });
       o.push({ label: 'Open in default player', hint: 'your OS default', act: () => playInApp('default') });
     }
     if (watchInfo.browser) o.push({ label: 'Play in browser', hint: watchInfo.encoded ? 'the encoded copy · seekable' : 'plays directly · seekable', act: openPlayer });

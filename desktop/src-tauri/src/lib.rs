@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -14,7 +15,15 @@ struct PlayerInfo {
 /// First path printed by `where`/`which`, if the command resolves on PATH.
 fn which(cmd: &str) -> Option<String> {
     let probe = if cfg!(windows) { "where" } else { "which" };
-    let out = Command::new(probe).arg(cmd).output().ok()?;
+    let mut c = Command::new(probe);
+    c.arg(cmd);
+    // Don't pop a console window on Windows while probing PATH.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    let out = c.output().ok()?;
     if !out.status.success() {
         return None;
     }
@@ -58,13 +67,18 @@ fn mpv_candidates() -> Vec<PathBuf> {
 }
 
 fn find_mpv() -> Option<String> {
-    if let Some(p) = which("mpv") {
-        return Some(p);
-    }
-    mpv_candidates()
-        .into_iter()
-        .find(|c| c.exists())
-        .map(|c| c.to_string_lossy().to_string())
+    // Cache the lookup so we probe PATH at most once per app session.
+    static MPV_PATH: OnceLock<Option<String>> = OnceLock::new();
+    MPV_PATH
+        .get_or_init(|| {
+            which("mpv").or_else(|| {
+                mpv_candidates()
+                    .into_iter()
+                    .find(|c| c.exists())
+                    .map(|c| c.to_string_lossy().to_string())
+            })
+        })
+        .clone()
 }
 
 #[tauri::command]
