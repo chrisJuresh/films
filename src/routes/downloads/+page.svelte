@@ -48,20 +48,27 @@
   let localFailed = $derived(Object.entries($downloads)
     .filter(([, d]) => d.done && d.error)
     .map(([id, d]) => ({ id: +id, error: d.error, film: metaMap[id] || null })));
+  // A file is complete unless local_downloads flags it complete:false (an older
+  // app without the flag omitted incomplete files, so undefined ⇒ complete).
   let localSaved = $derived.by(() => {
     const m = new Map();
-    for (const x of localList) m.set(x.id, { id: x.id, path: x.path, size: x.size, film: metaMap[x.id] || null });
+    for (const x of localList) if (x.complete !== false) m.set(x.id, { id: x.id, path: x.path, size: x.size, film: metaMap[x.id] || null });
     for (const [id, d] of Object.entries($downloads)) {            // just-finished, before the disk re-list lands
       const n = +id;
       if (d.done && !d.error && !m.has(n)) m.set(n, { id: n, path: null, size: null, film: metaMap[id] || null });
     }
     return [...m.values()];
   });
-  let localTotal = $derived(localSaving.length + localFailed.length + localSaved.length);
-  let hasLocal = $derived(isTauri && localTotal > 0);
+  // Leftover .part files (interrupted saves) — but not ones actively saving now.
+  let localIncomplete = $derived(localList
+    .filter((x) => x.complete === false && !(String(x.id) in $downloads))
+    .map((x) => ({ id: x.id, path: x.path, size: x.size, film: metaMap[x.id] || null })));
+  let localTotal = $derived(localSaving.length + localFailed.length + localIncomplete.length + localSaved.length);
 
   let total = $derived(downloading.length + wanted.length + errored.length + downloaded.length);
-  let nothing = $derived(total === 0 && !hasLocal);
+  // In the app the "On this PC" section always shows (so the folder button is
+  // always reachable), so the big empty state is only for the web with nothing.
+  let nothing = $derived(total === 0 && !isTauri);
 
   // Re-list the disk whenever a save completes (done count rises), and on mount.
   let doneCount = $derived(Object.values($downloads).filter((d) => d.done && !d.error).length);
@@ -118,23 +125,30 @@
       <a class="cta" href="/">Browse the catalogue</a>
     </div>
   {:else}
-    {#if hasLocal}
+    {#if isTauri}
       <section>
-        <h2><Icon name="monitor" size={15} stroke={2} /> On this PC <span class="n">{localTotal}</span>
-          <button class="folder-btn" onclick={openDownloadsFolder} title="Open the downloads folder"><Icon name="folder" size={14} /> Folder</button>
+        <h2><Icon name="monitor" size={15} stroke={2} /> On this PC {#if localTotal}<span class="n">{localTotal}</span>{/if}
+          <button class="folder-btn" onclick={openDownloadsFolder} title="Open the “Save to PC” folder"><Icon name="folder" size={14} /> Folder</button>
         </h2>
-        <p class="hint">Your “Save to PC” copies — kept locally in the desktop app for offline mpv playback.</p>
-        <div class="rows">
-          {#each localSaving as x (x.id)}
-            <LocalRow id={x.id} film={x.film} kind="saving" pct={x.pct} />
-          {/each}
-          {#each localFailed as x (x.id)}
-            <LocalRow id={x.id} film={x.film} kind="error" error={x.error} />
-          {/each}
-          {#each localSaved as x (x.id)}
-            <LocalRow id={x.id} film={x.film} kind="saved" path={x.path} size={x.size} />
-          {/each}
-        </div>
+        <p class="hint">Your “Save to PC” copies — kept locally for offline mpv playback. (Separate from the catalogue's “In library”, which lives on the server.)</p>
+        {#if localTotal}
+          <div class="rows">
+            {#each localSaving as x (x.id)}
+              <LocalRow id={x.id} film={x.film} kind="saving" pct={x.pct} />
+            {/each}
+            {#each localFailed as x (x.id)}
+              <LocalRow id={x.id} film={x.film} kind="error" error={x.error} />
+            {/each}
+            {#each localIncomplete as x (x.id)}
+              <LocalRow id={x.id} film={x.film} kind="incomplete" path={x.path} size={x.size} />
+            {/each}
+            {#each localSaved as x (x.id)}
+              <LocalRow id={x.id} film={x.film} kind="saved" path={x.path} size={x.size} />
+            {/each}
+          </div>
+        {:else}
+          <p class="empty-sm">No “Save to PC” copies found in the app's folder. Start one from a film page, or click <em>Folder</em> to see what's there. (A film that's only <em>downloaded</em> to the library isn't saved to this PC.)</p>
+        {/if}
       </section>
     {/if}
 
@@ -218,6 +232,9 @@
   .folder-btn:hover { color: var(--text); border-color: var(--border-strong); }
   .folder-btn :global(.icon) { color: var(--accent); }
   .hint { color: var(--muted); font-size: 13px; margin: -4px 0 12px; }
+  .empty-sm { color: var(--muted); font-size: 13px; padding: 14px 16px; border: 1px dashed var(--border);
+    border-radius: 12px; max-width: 70ch; }
+  .empty-sm em { font-style: normal; color: var(--text); font-weight: 600; }
   .hint a { color: var(--accent); text-decoration: none; }
   .hint a:hover { text-decoration: underline; }
   .rows { display: flex; flex-direction: column; gap: 8px; }

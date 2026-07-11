@@ -245,26 +245,33 @@ struct LocalDl {
     id: i64,
     path: String,
     size: u64,
+    complete: bool,
 }
 
-/// Every film saved to this PC (a completed "Save to PC" preload). Enumerates
-/// the cache dir for `{id}.{ext}` files big enough to be a real film — in-flight
-/// `.part` files are skipped (their extension isn't a media one).
+/// Films in the "Save to PC" cache. Complete saves are `<id>.<media>`; an
+/// interrupted one is `<id>.<media>.part` — we report BOTH (complete=false for
+/// the .part) so a half-finished save is visible instead of silently missing.
 #[tauri::command]
 fn local_downloads(app: AppHandle) -> Vec<LocalDl> {
     let mut out = Vec::new();
     let Ok(dir) = cache_dir(&app) else { return out; };
     let Ok(entries) = std::fs::read_dir(&dir) else { return out; };
-    let exts = ["mkv", "mp4", "m4v", "webm", "avi"];
+    let media = ["mkv", "mp4", "m4v", "webm", "avi"];
     for e in entries.flatten() {
         let p = e.path();
-        let ext_ok = p.extension().and_then(|x| x.to_str()).map(|x| exts.contains(&x)).unwrap_or(false);
-        if !ext_ok { continue; }
-        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue; };
-        let Ok(id) = stem.parse::<i64>() else { continue; };   // cache files are named "<id>.<ext>"
+        let fname = match p.file_name().and_then(|s| s.to_str()) { Some(s) => s.to_string(), None => continue };
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-        if size < 20_000_000 { continue; }                     // ignore bogus tiny files
-        out.push(LocalDl { id, path: p.to_string_lossy().to_string(), size });
+        // "<id>.<media>.part" → incomplete; "<id>.<media>" → complete.
+        let (id_str, complete) = if let Some(base) = fname.strip_suffix(".part") {
+            (base.rsplit_once('.').map_or(base, |(a, _)| a), false)
+        } else {
+            let ext_ok = p.extension().and_then(|x| x.to_str()).map(|x| media.contains(&x)).unwrap_or(false);
+            if !ext_ok { continue; }
+            (fname.rsplit_once('.').map_or(fname.as_str(), |(a, _)| a), true)
+        };
+        let Ok(id) = id_str.parse::<i64>() else { continue; };   // cache files are named "<id>.…"
+        if complete && size < 20_000_000 { continue; }           // ignore bogus tiny complete files
+        out.push(LocalDl { id, path: p.to_string_lossy().to_string(), size, complete });
     }
     out
 }

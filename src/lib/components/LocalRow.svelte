@@ -6,8 +6,8 @@
   import { toast } from '$lib/stores.js';
 
   // A "Save to PC" download row (desktop app). kind: 'saving' (live %), 'error'
-  // (failed — retry lives on the film page), 'saved' (on disk, playable in mpv).
-  // film may be null until its metadata resolves; we fall back to "Film #id".
+  // (failed), 'incomplete' (a leftover .part — interrupted save), 'saved' (on
+  // disk, playable). film may be null until metadata resolves; fall back to "Film #id".
   let { id, film = null, kind = 'saving', pct = 0, error = null, path = null, size = null } = $props();
   let poster = $state(null);
   let busy = $state(false);
@@ -53,6 +53,7 @@
     <div class="s">
       {#if kind === 'saving'}Saving to this PC…
       {:else if kind === 'error'}Save failed
+      {:else if kind === 'incomplete'}Incomplete save{size ? ' · ' + fmtSize(size) + ' so far' : ''}
       {:else}Saved on this PC{size ? ' · ' + fmtSize(size) : ''}{/if}
     </div>
     {#if kind === 'saving'}
@@ -64,6 +65,12 @@
       <span class="pct">{pct ? pct + '%' : '…'}</span>
     {:else if kind === 'error'}
       <span class="tag err" title={error}><Icon name="alert" size={13} stroke={2.2} /> retry on film page</span>
+      <span class="go" aria-hidden="true"><Icon name="chevron" size={16} /></span>
+    {:else if kind === 'incomplete'}
+      <button class="icon-btn" onclick={reveal} disabled={busy} aria-label="Show in folder" title="Show in folder">
+        <Icon name="folder" size={15} />
+      </button>
+      <span class="tag warn" title="Interrupted — open the film and hit Save to PC to resume">resume on film page</span>
       <span class="go" aria-hidden="true"><Icon name="chevron" size={16} /></span>
     {:else}
       <button class="icon-btn" onclick={reveal} disabled={busy} aria-label="Show in folder" title="Show in folder">
@@ -106,8 +113,10 @@
   .icon-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
   .icon-btn:disabled { opacity: .5; cursor: default; }
   .tag { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
-    padding: 4px 9px; border-radius: 999px; white-space: nowrap; color: #e5675c;
-    background: color-mix(in srgb, #e5675c 15%, transparent); }
+    padding: 4px 9px; border-radius: 999px; white-space: nowrap; color: var(--muted);
+    background: color-mix(in srgb, var(--text) 8%, transparent); }
+  .tag.err { color: #e5675c; background: color-mix(in srgb, #e5675c 15%, transparent); }
+  .tag.warn { color: #d99a2b; background: color-mix(in srgb, #d99a2b 16%, transparent); }
   .go { color: var(--faint); display: grid; place-items: center; }
   .row:hover .go { color: var(--muted); }
 </style>
