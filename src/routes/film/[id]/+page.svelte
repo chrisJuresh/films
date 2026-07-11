@@ -163,6 +163,9 @@
   // The Download button's state — reflects requested/downloading/importing even
   // when the grab wasn't Radarr's top pick (e.g. a qB-direct grab). "Choose
   // release" stays enabled as the manual override.
+  // In library per the live Radarr view OR the immediate film_download snapshot
+  // (the snapshot means the button is right even before the slow Radarr call).
+  let inLibrary = $derived(!!(radarr?.hasFile || film.download === 'downloaded'));
   let dlBtn = $derived.by(() => {
     if (downloadState === 'loading') return { label: 'Sending…', disabled: true, icon: 'sync', spin: true };
     if (radarr?.queue) {
@@ -171,7 +174,8 @@
       return { label: importing ? 'Importing…' : `Downloading${p != null ? ' ' + p + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
     }
     if (radarr?.qb) return { label: radarr.qb.done ? 'Importing…' : `Downloading ${radarr.qb.progress}%…`, disabled: true, icon: 'sync', spin: true };
-    if ((radarr?.present && radarr?.monitored) || downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
+    if (film.download === 'downloading') return { label: `Downloading${film.download_progress != null ? ' ' + film.download_progress + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
+    if ((radarr?.present && radarr?.monitored) || film.download === 'wanted' || downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
     return { label: 'Download', disabled: false, icon: 'download', spin: false };
   });
   async function downloadFilm() {
@@ -433,7 +437,7 @@
             </div>
           {/if}
         </div>
-        {#if radarr?.hasFile}
+        {#if inLibrary}
           <div class="watch-split has-caret" bind:this={dlSplitEl}>
             <a class="btn" href="/api/file/{film.id_tspdt}" download><Icon name="download" size={16} /> Download</a>
             <button class="btn caret" aria-label="Download options" aria-expanded={dlMenu} onclick={openDlMenu}><Icon name="chevron" size={15} /></button>

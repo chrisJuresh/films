@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { getFilmBasic } from '$lib/server/db.js';
 import { getMovieFileInfo, RadarrError } from '$lib/server/radarr.js';
-import { resolveSource, encodedFile, ffprobeDuration, ensureEncodeDir } from '$lib/server/media.js';
+import { resolveSource, encodedFile, ffprobeInfo, ensureEncodeDir } from '$lib/server/media.js';
 import { startEncode, encodeJob } from '$lib/server/transcode.js';
 
 // GET: current encode job status. POST: start an iGPU encode to a saved copy.
@@ -29,7 +29,7 @@ export async function POST({ params }) {
   if (!src) throw error(422, 'Source file is not accessible to the server — check the media mount.');
 
   ensureEncodeDir();
-  const duration = await ffprobeDuration(src);
-  const job = startEncode(id, src, encodedFile(id), duration || 0);
+  const info = await ffprobeInfo(src);
+  const job = startEncode(id, src, encodedFile(id), info);
   return json({ state: job.state, percent: job.percent });
 }

@@ -37,12 +37,19 @@ async function cookie(cfg) {
 export async function grabToQb(release, movieId) {
   const cfg = config();
   if (!cfg) throw new QbError('qBittorrent is not configured.', 503);
-  const url = release?.downloadUrl || release?.magnetUrl;
-  if (!url) throw new QbError('That release has no download link.', 422);
+  const dl = release?.downloadUrl, magnet = release?.magnetUrl;
+  if (!dl && !magnet) throw new QbError('That release has no download link.', 422);
+  // Fetch the .torrent ourselves (reliable) and upload the bytes; magnets go as URLs.
+  let torrentFile = null;
+  if (dl && /^https?:/i.test(dl)) {
+    try { const r = await fetch(dl); if (r.ok) torrentFile = Buffer.from(await r.arrayBuffer()); } catch { /* fall back to URL below */ }
+  }
+  const tags = `${IMPORT_TAG},${movieTag(movieId)}`;
   const run = async () => {
     const c = await cookie(cfg);
     await qb.createCategory(cfg, CATEGORY, c, fetch);
-    await qb.addTorrent(cfg, { url, category: CATEGORY, tags: `${IMPORT_TAG},${movieTag(movieId)}` }, c, fetch);
+    if (torrentFile) await qb.addTorrent(cfg, { torrentFile, filename: `film-${movieId}.torrent`, category: CATEGORY, tags }, c, fetch);
+    else await qb.addTorrent(cfg, { url: magnet || dl, category: CATEGORY, tags }, c, fetch);
   };
   try { await run(); } catch { _cookie = null; await run(); }   // one retry after re-login
   startPump();

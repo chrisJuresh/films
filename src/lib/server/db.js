@@ -280,10 +280,11 @@ export function getFilmBasic(id) {
 export function getFilm(id, user = 'local') {
   const db = getDb();
   const row = db.prepare(
-    `SELECT f.*, us.status, lb.state AS lb_state
+    `SELECT f.*, us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress
      FROM films f
      LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
      LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
+     LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt
      WHERE f.id_tspdt = ?`
   ).get(user, user, id);
   if (!row) return null;

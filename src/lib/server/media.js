@@ -73,3 +73,30 @@ export function ffprobeDuration(path) {
     } catch { resolve(null); }
   });
 }
+
+/** Source info for choosing encode settings: duration, audio channel count, and
+ *  whether the video is HDR (needs tone-mapping to SDR). Best-effort defaults. */
+export function ffprobeInfo(path) {
+  return new Promise((resolve) => {
+    const fallback = { duration: null, channels: 2, hdr: false };
+    let out = '';
+    try {
+      const p = spawn('ffprobe', ['-v', 'error', '-show_entries',
+        'format=duration:stream=codec_type,channels,color_transfer,color_space,color_primaries', '-of', 'json', path]);
+      p.stdout.on('data', (d) => (out += d));
+      p.on('close', () => {
+        try {
+          const j = JSON.parse(out);
+          const dur = parseFloat(j.format?.duration);
+          const streams = j.streams || [];
+          const v = streams.find((s) => s.codec_type === 'video') || {};
+          const a = streams.find((s) => s.codec_type === 'audio') || {};
+          const tags = `${v.color_transfer || ''} ${v.color_space || ''} ${v.color_primaries || ''}`.toLowerCase();
+          const hdr = /smpte2084|arib-std-b67|bt2020/.test(tags);
+          resolve({ duration: Number.isFinite(dur) ? dur : null, channels: Number(a.channels) || 2, hdr });
+        } catch { resolve(fallback); }
+      });
+      p.on('error', () => resolve(fallback));
+    } catch { resolve(fallback); }
+  });
+}

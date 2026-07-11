@@ -49,12 +49,13 @@ export async function createCategory(settings, name, cookie, fetchImpl = globalT
   } catch { /* already exists / not fatal */ }
 }
 
-/** Add a torrent by URL or magnet, with a category + tags. qB adds a URL
- *  asynchronously (it fetches the .torrent in the background), so success can be
- *  "pending" rather than immediate. */
-export async function addTorrent(settings, { url, category, tags }, cookie, fetchImpl = globalThis.fetch) {
+/** Add a torrent, with a category + tags. Prefer uploading the .torrent bytes
+ *  (synchronous, reliable) over handing qB a URL (qB fetches URLs asynchronously,
+ *  which can silently fail to materialise). Falls back to a URL/magnet. */
+export async function addTorrent(settings, { url, torrentFile, filename, category, tags }, cookie, fetchImpl = globalThis.fetch) {
   const fd = new FormData();
-  fd.append('urls', url);
+  if (torrentFile) fd.append('torrents', new Blob([torrentFile], { type: 'application/x-bittorrent' }), filename || 'film.torrent');
+  else fd.append('urls', url);
   if (category) fd.append('category', category);
   if (tags) fd.append('tags', tags);
   const res = await fetchImpl(new URL('api/v2/torrents/add', settings.baseUrl), {

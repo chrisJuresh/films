@@ -14,7 +14,7 @@ export function encodeJob(id) { return jobs.get(id) || null; }
 
 const vf = (maxH) => `scale=-2:'min(${maxH},ih)',format=nv12,hwupload`;
 
-export function startEncode(id, src, out, duration, quality = '1080') {
+export function startEncode(id, src, out, info = {}) {
   const existing = jobs.get(id);
   if (existing && existing.state === 'running') return existing;
   try { mkdirSync(dirname(out), { recursive: true }); } catch { /* best-effort */ }
@@ -28,22 +28,29 @@ export function startEncode(id, src, out, duration, quality = '1080') {
 
   const job = { state: 'running', percent: 0, out, error: null };
   jobs.set(id, job);
+  const duration = info.duration || 0;
 
-  // Tuned for a colour-calibrated Dell S3220DGF (1440p, SDR/sRGB, 8-bit, HDR off):
-  //   - cap at the panel's native 1440p, never upscale (upscaling only bloats size;
-  //     the GPU upscales 1080p→1440p at playback just as well)
-  //   - H.264 High profile, 8-bit 4:2:0 (nv12) BT.709 — exactly what an SDR sRGB
-  //     display wants, and universally browser-playable
-  //   - QP 18: visually transparent for VAAPI H.264 (quality over file size)
-  //   - AAC 192k stereo
-  const maxH = quality === '720' ? 720 : quality === '1080' ? 1080 : 1440;
+  // A compact, modern, web-optimised copy for the BROWSER fallback + downloads
+  // (the desktop app plays the MASTER via mpv, so it needs no encode). SVT-AV1
+  // 10-bit, RF 20, preset 5, capped to the panel's native 2560x1440 (never
+  // upscaled), output SDR Rec.709. HDR sources are tone-mapped to SDR.
+  const box = "scale='min(2560,iw)':'min(1440,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2";
+  const filters = info.hdr
+    ? `zscale=t=linear:npl=100,tonemap=tonemap=hable:desat=0,zscale=p=bt709:t=bt709:m=bt709:r=tv,${box},format=yuv420p10le,setsar=1`
+    : `${box},format=yuv420p10le,setsar=1`;
+  // AAC 5.1 @ 640k for surround sources; else stereo @ 256k.
+  const audio = (info.channels || 2) > 2
+    ? ['-c:a', 'aac', '-ac', '6', '-b:a', '640k']
+    : ['-c:a', 'aac', '-ac', '2', '-b:a', '256k'];
+
   const args = [
     '-hide_banner', '-nostdin', '-y',
-    '-vaapi_device', VAAPI_DEVICE,
     '-i', src,
-    '-vf', vf(maxH),
-    '-c:v', 'h264_vaapi', '-profile:v', 'high', '-qp', '18',
-    '-c:a', 'aac', '-b:a', '192k', '-ac', '2',
+    '-map', '0:v:0', '-map', '0:a:0?',
+    '-vf', filters,
+    '-c:v', 'libsvtav1', '-crf', '20', '-preset', '5', '-pix_fmt', 'yuv420p10le',
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709',
+    ...audio,
     '-movflags', '+faststart',
     '-progress', 'pipe:1', '-nostats',
     part
