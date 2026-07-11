@@ -1,25 +1,84 @@
 <script>
   import { onMount } from 'svelte';
+  import { browser } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
   import FilmCard from '$lib/components/FilmCard.svelte';
   import DownloadRow from '$lib/components/DownloadRow.svelte';
+  import LocalRow from '$lib/components/LocalRow.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { downloads } from '$lib/stores.js';
 
   let { data } = $props();
+  const isTauri = browser && !!window.__TAURI__?.core?.invoke;
 
-  // Counts come from the layout load (data.downloads); the four lists from this
-  // page's load. Locally-cancelled ids are filtered until Radarr's snapshot
-  // catches up (its 45s TTL can otherwise briefly resurrect a cancelled row).
+  /* ---- Radarr (server-side) downloads ----
+     Counts come from the layout load (data.downloads); the four lists from this
+     page's load. Locally-cancelled ids are filtered until Radarr's snapshot
+     catches up (its 45s TTL can otherwise briefly resurrect a cancelled row). */
   let cancelled = $state(new Set());
   let downloading = $derived(data.downloading.filter((f) => !cancelled.has(f.id_tspdt)));
   let wanted = $derived(data.wanted);
   let errored = $derived(data.errored);
   let downloaded = $derived(data.downloaded);
   let counts = $derived(data.downloads || { downloaded: 0, downloading: 0, wanted: 0, error: 0 });
-  let total = $derived(downloading.length + wanted.length + errored.length + downloaded.length);
   let postersEnabled = $derived(!!data.meta?.tmdb);
-
   function onCancel(id) { cancelled = new Set([...cancelled, id]); invalidateAll(); }
+
+  /* ---- "Save to PC" downloads (desktop app only) ----
+     $downloads is this session's live progress (keyed by film id); local_downloads
+     lists what's actually on disk (survives restarts). Titles/posters come from
+     /api/films/by-id — these films needn't be in any Radarr state. */
+  let localList = $state([]);        // [{ id, path, size }] on disk
+  let metaMap = $state({});          // id -> { title, rank, year, director, imdb_id } | null
+
+  async function refreshLocal() {
+    if (!isTauri) return;
+    try { localList = (await window.__TAURI__.core.invoke('local_downloads')) || []; }
+    catch { localList = []; }        // older app that lacks the command
+  }
+
+  let localSaving = $derived(Object.entries($downloads)
+    .filter(([, d]) => !d.done)
+    .map(([id, d]) => ({ id: +id, pct: d.pct, film: metaMap[id] || null })));
+  let localFailed = $derived(Object.entries($downloads)
+    .filter(([, d]) => d.done && d.error)
+    .map(([id, d]) => ({ id: +id, error: d.error, film: metaMap[id] || null })));
+  let localSaved = $derived.by(() => {
+    const m = new Map();
+    for (const x of localList) m.set(x.id, { id: x.id, path: x.path, size: x.size, film: metaMap[x.id] || null });
+    for (const [id, d] of Object.entries($downloads)) {            // just-finished, before the disk re-list lands
+      const n = +id;
+      if (d.done && !d.error && !m.has(n)) m.set(n, { id: n, path: null, size: null, film: metaMap[id] || null });
+    }
+    return [...m.values()];
+  });
+  let localTotal = $derived(localSaving.length + localFailed.length + localSaved.length);
+  let hasLocal = $derived(isTauri && localTotal > 0);
+
+  let total = $derived(downloading.length + wanted.length + errored.length + downloaded.length);
+  let nothing = $derived(total === 0 && !hasLocal);
+
+  // Re-list the disk whenever a save completes (done count rises), and on mount.
+  let doneCount = $derived(Object.values($downloads).filter((d) => d.done && !d.error).length);
+  $effect(() => { void doneCount; refreshLocal(); });
+
+  // Resolve titles for any ids we don't have yet; mark attempted ids (even
+  // unresolvable ones) so the effect settles instead of refetching forever.
+  $effect(() => {
+    if (!isTauri) return;
+    const ids = new Set([...Object.keys($downloads).map(Number), ...localList.map((x) => x.id)]);
+    const missing = [...ids].filter((id) => !(id in metaMap));
+    if (!missing.length) return;
+    fetch('/api/films/by-id?ids=' + missing.join(','))
+      .then((r) => r.json())
+      .then((rows) => {
+        const add = {};
+        for (const f of rows) add[f.id_tspdt] = f;
+        for (const id of missing) if (!(id in add)) add[id] = null;
+        metaMap = { ...metaMap, ...add };
+      })
+      .catch(() => {});
+  });
 
   // Live-ish: re-run the loads every 15s while the tab is visible. The Radarr
   // pull behind it is TTL-guarded, so this is cheap and self-throttling.
@@ -46,14 +105,32 @@
     </div>
   </header>
 
-  {#if total === 0}
+  {#if nothing}
     <div class="empty">
       <Icon name="download" size={30} />
       <p>Nothing downloading yet.</p>
-      <span>Open a film and hit <em>Download</em> — it'll show up here while Radarr fetches it.</span>
+      <span>Open a film and hit <em>Download</em>{#if isTauri} or <em>Save to PC</em>{/if} — it'll show up here.</span>
       <a class="cta" href="/">Browse the catalogue</a>
     </div>
   {:else}
+    {#if hasLocal}
+      <section>
+        <h2><Icon name="monitor" size={15} stroke={2} /> On this PC <span class="n">{localTotal}</span></h2>
+        <p class="hint">Your “Save to PC” copies — kept locally in the desktop app for offline mpv playback.</p>
+        <div class="rows">
+          {#each localSaving as x (x.id)}
+            <LocalRow id={x.id} film={x.film} kind="saving" pct={x.pct} />
+          {/each}
+          {#each localFailed as x (x.id)}
+            <LocalRow id={x.id} film={x.film} kind="error" error={x.error} />
+          {/each}
+          {#each localSaved as x (x.id)}
+            <LocalRow id={x.id} film={x.film} kind="saved" path={x.path} size={x.size} />
+          {/each}
+        </div>
+      </section>
+    {/if}
+
     {#if downloading.length}
       <section>
         <h2><Icon name="download" size={16} stroke={2.2} /> Downloading <span class="n">{downloading.length}</span></h2>

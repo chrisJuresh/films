@@ -241,6 +241,35 @@ fn local_file(app: AppHandle, id: i64) -> Option<String> {
 }
 
 #[derive(Serialize, Clone)]
+struct LocalDl {
+    id: i64,
+    path: String,
+    size: u64,
+}
+
+/// Every film saved to this PC (a completed "Save to PC" preload). Enumerates
+/// the cache dir for `{id}.{ext}` files big enough to be a real film — in-flight
+/// `.part` files are skipped (their extension isn't a media one).
+#[tauri::command]
+fn local_downloads(app: AppHandle) -> Vec<LocalDl> {
+    let mut out = Vec::new();
+    let Ok(dir) = cache_dir(&app) else { return out; };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return out; };
+    let exts = ["mkv", "mp4", "m4v", "webm", "avi"];
+    for e in entries.flatten() {
+        let p = e.path();
+        let ext_ok = p.extension().and_then(|x| x.to_str()).map(|x| exts.contains(&x)).unwrap_or(false);
+        if !ext_ok { continue; }
+        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue; };
+        let Ok(id) = stem.parse::<i64>() else { continue; };   // cache files are named "<id>.<ext>"
+        let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        if size < 20_000_000 { continue; }                     // ignore bogus tiny files
+        out.push(LocalDl { id, path: p.to_string_lossy().to_string(), size });
+    }
+    out
+}
+
+#[derive(Serialize, Clone)]
 struct DlProgress {
     id: i64,
     received: u64,
@@ -353,6 +382,7 @@ pub fn run() {
             open_in_player,
             check_update,
             local_file,
+            local_downloads,
             download_to_pc
         ])
         .run(tauri::generate_context!())

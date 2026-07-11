@@ -271,6 +271,19 @@ export function queryFilms(p = {}) {
   return { total, items };
 }
 
+// Basic rows for a set of ids (order not guaranteed). Used by the download
+// tracker to resolve titles/posters for locally-saved films (desktop app),
+// which aren't necessarily in any Radarr download state.
+export function filmsByIds(ids) {
+  const arr = [...new Set((ids || []).map(Number).filter(Number.isInteger))].slice(0, 300);
+  if (!arr.length) return [];
+  const ph = arr.map(() => '?').join(',');
+  return getDb().prepare(
+    `SELECT id_tspdt, latest_rank AS rank, title, year, director, imdb_id
+     FROM films WHERE id_tspdt IN (${ph})`
+  ).all(...arr);
+}
+
 export function getFilmBasic(id) {
   return getDb().prepare(
     'SELECT id_tspdt, imdb_id, imdb_url, title, year FROM films WHERE id_tspdt = ?'
