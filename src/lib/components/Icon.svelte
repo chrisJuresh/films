@@ -23,6 +23,7 @@
     alert:     '<path d="M10.3 4 2.6 17.5A2 2 0 0 0 4.3 20.5h15.4a2 2 0 0 0 1.7-3L13.7 4a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
     up:        '<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>',
     chevron:   '<path d="m6 9 6 6 6-6"/>',
+    hdd:       '<rect x="3" y="7.5" width="18" height="9" rx="2"/><path d="M7 12h5.5"/><path d="M16.5 12h.01"/>',
   };
 </script>
 

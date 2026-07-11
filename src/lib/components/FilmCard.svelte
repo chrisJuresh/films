@@ -15,6 +15,8 @@
   let seen = $derived(status === 'seen' || lbWatched);
   let rewatch = $derived(status === 'rewatch');
   let unfinished = $derived(status === 'unfinished');
+  // Radarr download state (global, not per-user): downloaded|downloading|wanted|error
+  let download = $derived(film.download ?? null);
 
   // Pull real poster art (TMDB) for this card. Rendering is already bounded to
   // ~60 cards per page by the grid's infinite scroll, so a per-card fetch is fine.
@@ -56,7 +58,13 @@
   <div class="pw">
     <Poster title={film.title} rank={film.rank} src={poster} />
     <span class="rank">#{film.rank}</span>
-    {#if film.is_new}<span class="badge new">NEW</span>{/if}
+    <div class="rtags">
+      {#if film.is_new}<span class="badge new">NEW</span>{/if}
+      {#if download === 'downloaded'}<span class="dtag done" title="Downloaded"><Icon name="hdd" size={12} stroke={2} /></span>
+      {:else if download === 'downloading'}<span class="dtag active" title="Downloading"><Icon name="download" size={12} stroke={2.3} /></span>
+      {:else if download === 'wanted'}<span class="dtag want" title="Wanted · Radarr searching"><Icon name="search" size={11} stroke={2.4} /></span>
+      {:else if download === 'error'}<span class="dtag err" title="Download problem"><Icon name="alert" size={11} stroke={2.2} /></span>{/if}
+    </div>
     {#if watchlisted || seen || rewatch || unfinished}
       <div class="tags">
         {#if watchlisted}<span class="tag wl" title="On watchlist"><Icon name="heart" size={12} stroke={2.2} /></span>{/if}
@@ -91,9 +99,19 @@
   .rank { position: absolute; top: 9px; left: 9px; z-index: 2; background: var(--accent);
     color: var(--accent-ink); font-weight: 700; font-size: 12.5px; padding: 3px 8px;
     border-radius: 7px; font-variant-numeric: tabular-nums; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
-  .badge { position: absolute; top: 9px; right: 9px; z-index: 2; font-size: 10px; font-weight: 700;
-    letter-spacing: .05em; padding: 3px 7px; border-radius: 6px; }
+  /* Top-right stack: NEW badge, then the Radarr download-state indicator. */
+  .rtags { position: absolute; top: 9px; right: 9px; z-index: 2; display: flex; flex-direction: column;
+    align-items: flex-end; gap: 5px; }
+  .badge { font-size: 10px; font-weight: 700; letter-spacing: .05em; padding: 3px 7px; border-radius: 6px; }
   .badge.new { background: color-mix(in srgb, var(--accent) 34%, #000 24%); color: #fff; }
+  .dtag { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,.45); }
+  .dtag.done { background: #2f7de1; }               /* downloaded — in the library */
+  .dtag.active { background: #2f7de1; }             /* downloading — same family, pulsing */
+  .dtag.active :global(.icon) { animation: dl-pulse 1.4s ease-in-out infinite; }
+  .dtag.want { background: #6b7280; }               /* wanted — monitored, searching */
+  .dtag.err { background: #e5675c; }                /* download problem */
+  @keyframes dl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 
   /* Permanent status indicators (below the rank). Watchlist/seen are vivid;
      rewatch/unfinished use quieter, desaturated colours -- they're secondary. */
