@@ -33,23 +33,28 @@ async function cookie(cfg) {
   return _cookie;
 }
 
-/** Add a release straight to qBittorrent, tagged for import into `movieId`. */
+/** Add a release straight to qBittorrent, tagged for import into `movieId`.
+ *  Throws (rather than pretending success) if it can't obtain a real torrent,
+ *  so the caller can move on to another release. */
 export async function grabToQb(release, movieId) {
   const cfg = config();
   if (!cfg) throw new QbError('qBittorrent is not configured.', 503);
   const dl = release?.downloadUrl, magnet = release?.magnetUrl;
   if (!dl && !magnet) throw new QbError('That release has no download link.', 422);
-  // Fetch the .torrent ourselves (reliable) and upload the bytes; magnets go as URLs.
-  let torrentFile = null;
+  // Fetch the .torrent ourselves (a FILE upload is synchronous + reliable, unlike
+  // a URL hand-off) and verify it really is one before trusting it.
+  let buf = null;
   if (dl && /^https?:/i.test(dl)) {
-    try { const r = await fetch(dl); if (r.ok) torrentFile = Buffer.from(await r.arrayBuffer()); } catch { /* fall back to URL below */ }
+    try { const r = await fetch(dl); if (r.ok) buf = Buffer.from(await r.arrayBuffer()); } catch { /* validated below */ }
   }
+  const src = qb.torrentSource(buf, magnet);
+  if (!src) throw new QbError('Could not fetch a usable .torrent for that release.', 502);
   const tags = `${IMPORT_TAG},${movieTag(movieId)}`;
   const run = async () => {
     const c = await cookie(cfg);
     await qb.createCategory(cfg, CATEGORY, c, fetch);
-    if (torrentFile) await qb.addTorrent(cfg, { torrentFile, filename: `film-${movieId}.torrent`, category: CATEGORY, tags }, c, fetch);
-    else await qb.addTorrent(cfg, { url: magnet || dl, category: CATEGORY, tags }, c, fetch);
+    if (src.torrentFile) await qb.addTorrent(cfg, { torrentFile: src.torrentFile, filename: `film-${movieId}.torrent`, category: CATEGORY, tags }, c, fetch);
+    else await qb.addTorrent(cfg, { url: src.url, category: CATEGORY, tags }, c, fetch);
   };
   try { await run(); } catch { _cookie = null; await run(); }   // one retry after re-login
   startPump();

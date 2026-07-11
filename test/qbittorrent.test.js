@@ -1,6 +1,22 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { login, addTorrent, listTorrents, isComplete, QbError } from '../src/lib/server/qbittorrentClient.js';
+import { login, addTorrent, listTorrents, isComplete, QbError, torrentSource } from '../src/lib/server/qbittorrentClient.js';
+
+test('torrentSource: real .torrent bytes upload; dead links/HTML never become a URL', () => {
+  const torrent = Buffer.from('d8:announce35:http://tracker.example/announce...');   // bencode dict → starts with 'd'
+  assert.deepEqual(torrentSource(torrent, null), { torrentFile: torrent });
+
+  // A 500/HTML body (not bencode) with no magnet is unusable — must NOT be handed
+  // to qB as a URL (that silently "adds" then never downloads).
+  assert.equal(torrentSource(Buffer.from('<html>500</html>'), null), null);
+  assert.equal(torrentSource(null, null), null);
+  assert.equal(torrentSource(null, 'http://prowlarr/1/download?link=x'), null);   // http url is not a magnet
+
+  // No usable bytes but a genuine magnet → add the magnet.
+  assert.deepEqual(torrentSource(null, 'magnet:?xt=urn:btih:abc'), { url: 'magnet:?xt=urn:btih:abc' });
+  // Valid bytes win even when a magnet is also present.
+  assert.deepEqual(torrentSource(torrent, 'magnet:?xt=urn:btih:abc'), { torrentFile: torrent });
+});
 
 const settings = () => ({ baseUrl: new URL('http://qbittorrent:8081/'), username: 'u', password: 'p' });
 

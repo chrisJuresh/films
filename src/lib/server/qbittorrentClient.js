@@ -49,6 +49,18 @@ export async function createCategory(settings, name, cookie, fetchImpl = globalT
   } catch { /* already exists / not fatal */ }
 }
 
+// Decide what to hand qB from a fetched download body + a possible magnet.
+// A real .torrent is a bencoded dict — its first byte is 'd' (0x64). Anything
+// else (an indexer proxy 500, an HTML error page) is NOT uploaded, and a plain
+// http(s) URL is NEVER used as a fallback: qB fetches URLs asynchronously and
+// silently drops failures, so a dead link looks "added" but never downloads.
+// Only a genuine magnet: link is an acceptable URL fallback. null => unusable.
+export function torrentSource(buf, magnet) {
+  if (buf && buf.length > 20 && buf[0] === 0x64) return { torrentFile: buf };
+  if (typeof magnet === 'string' && /^magnet:/i.test(magnet)) return { url: magnet };
+  return null;
+}
+
 /** Add a torrent, with a category + tags. Prefer uploading the .torrent bytes
  *  (synchronous, reliable) over handing qB a URL (qB fetches URLs asynchronously,
  *  which can silently fail to materialise). Falls back to a URL/magnet. */

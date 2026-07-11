@@ -32,8 +32,8 @@ function config() {
   return { baseUrl, apiKey, rootFolderPath, qualityProfileId };
 }
 
-// Pick the best release for an automatic grab: highest resolution, then seeders.
-function bestByQuality(releases) {
+// Rank releases for an automatic grab: highest resolution, then seeders.
+function sortByQuality(releases) {
   const rank = (q) => {
     const s = (q || '').toLowerCase();
     if (s.includes('2160') || s.includes('4k') || s.includes('uhd')) return 4;
@@ -42,8 +42,9 @@ function bestByQuality(releases) {
     if (s.includes('480')) return 1;
     return 0;
   };
-  return [...(releases || [])].sort((a, b) => (rank(b.quality) - rank(a.quality)) || ((b.seeders || 0) - (a.seeders || 0)))[0] || null;
+  return [...(releases || [])].sort((a, b) => (rank(b.quality) - rank(a.quality)) || ((b.seeders || 0) - (a.seeders || 0)));
 }
+function bestByQuality(releases) { return sortByQuality(releases)[0] || null; }
 
 // Indexers match short titles far better than long festival ones, e.g.
 // "Jeanne Dielman, 23, quai du Commerce, 1080 Bruxelles" → "Jeanne Dielman".
@@ -62,24 +63,28 @@ export async function downloadWithRadarr(imdbId, year) {
   try { rr = await searchReleases(imdbId, cfg, { year }); } catch { return res; }
   if (rr.releases.some((r) => !r.rejected)) return res;     // Radarr can grab one itself
   try { pw = await searchProwlarr(cleanQuery(rr.title), year); } catch { pw = []; }
-  const pick = bestByQuality(pw);
-  if (!pick) return { ...res, prowlarrFound: 0, grabFailed: (await prowlarrDownNote()) || 'No releases found for this film right now.' };
-  try {
-    await pushRelease(pick, cfg);
-    return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'prowlarr', grabbed: pick.title };
-  } catch (e) {
-    // Radarr couldn't map the release title. Last resort: add it to qBittorrent
-    // directly and force-import it into Radarr by movie id once it finishes.
-    if (qbEnabled() && res.radarrId) {
-      try {
-        await grabToQb(pick, res.radarrId);
-        return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'qbittorrent', grabbed: pick.title };
-      } catch (qe) {
-        return { ...res, prowlarrFound: pw.length, grabFailed: qe?.message || e?.message };
+  const candidates = sortByQuality(pw);
+  if (!candidates.length) return { ...res, prowlarrFound: 0, grabFailed: (await prowlarrDownNote()) || 'No releases found for this film right now.' };
+  // Try releases best-first until one actually grabs. Push through Radarr when it
+  // can map the title, else qB-direct. A release whose download link is dead (some
+  // indexer-proxy links 500) throws and we just move on to the next candidate,
+  // instead of betting everything on the single highest-seeder pick.
+  let lastErr = null;
+  for (const pick of candidates) {
+    try {
+      await pushRelease(pick, cfg);
+      return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'prowlarr', grabbed: pick.title };
+    } catch (e) {
+      lastErr = e;
+      if (qbEnabled() && res.radarrId) {
+        try {
+          await grabToQb(pick, res.radarrId);
+          return { status: 'queued', title: rr.title, radarrId: res.radarrId, via: 'qbittorrent', grabbed: pick.title };
+        } catch (qe) { lastErr = qe; }   // dead link / bad release → try the next
       }
     }
-    return { ...res, prowlarrFound: pw.length, grabFailed: e?.message || 'Radarr could not grab the release.' };
   }
+  return { ...res, prowlarrFound: pw.length, grabFailed: lastErr?.message || 'Could not grab any of the releases found.' };
 }
 
 export async function getRadarrStatus(imdbId) {
