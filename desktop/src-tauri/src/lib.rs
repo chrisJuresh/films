@@ -78,6 +78,19 @@ fn player_info() -> PlayerInfo {
     }
 }
 
+/// The webview's Cloudflare-Access session cookies (CF_Authorization etc.) as a
+/// `Cookie:` header value, so native clients (mpv, the downloader) authenticate as
+/// the logged-in user — no CF service token needed. Reads HttpOnly cookies too.
+fn cf_cookie_header(window: &tauri::WebviewWindow) -> Option<String> {
+    let cookies = window.cookies().ok()?;
+    let parts: Vec<String> = cookies
+        .iter()
+        .filter(|c| c.name().starts_with("CF_"))
+        .map(|c| format!("{}={}", c.name(), c.value()))
+        .collect();
+    if parts.is_empty() { None } else { Some(parts.join("; ")) }
+}
+
 fn open_default(url: &str) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
@@ -92,7 +105,7 @@ fn open_default(url: &str) -> Result<String, String> {
 /// otherwise mpv is used — and if mpv can't be found we return a clear error
 /// (rather than silently opening the browser, which just re-streams).
 #[tauri::command]
-fn open_in_player(url: String, title: Option<String>, prefer: Option<String>) -> Result<String, String> {
+async fn open_in_player(window: tauri::WebviewWindow, url: String, title: Option<String>, prefer: Option<String>) -> Result<String, String> {
     if prefer.as_deref() == Some("default") {
         return open_default(&url);
     }
@@ -101,6 +114,13 @@ fn open_in_player(url: String, title: Option<String>, prefer: Option<String>) ->
             let mut c = Command::new(&mpv);
             if let Some(t) = title {
                 c.arg(format!("--force-media-title={t}"));
+            }
+            // Pass the logged-in session so mpv gets through Cloudflare Access
+            // (skipped for local files, which need no auth).
+            if url.starts_with("http") {
+                if let Some(cookie) = cf_cookie_header(&window) {
+                    c.arg(format!("--http-header-fields=Cookie: {cookie}"));
+                }
             }
             c.arg("--force-window=immediate");
             c.arg(&url);
@@ -184,8 +204,11 @@ fn local_file(app: AppHandle, id: i64) -> Option<String> {
     let d = cache_dir(&app).ok()?;
     for ext in ["mkv", "mp4", "m4v", "webm", "avi"] {
         let p = d.join(format!("{id}.{ext}"));
-        if p.exists() {
-            return Some(p.to_string_lossy().to_string());
+        // Ignore bogus tiny files (e.g. a saved auth/login page) — a real film is huge.
+        if let Ok(m) = std::fs::metadata(&p) {
+            if m.len() > 20_000_000 {
+                return Some(p.to_string_lossy().to_string());
+            }
         }
     }
     None
@@ -202,7 +225,7 @@ struct DlProgress {
 /// Download a film to the local cache (preload), emitting `films-download-progress`
 /// events so the UI can show a bar. Returns the final local path when complete.
 #[tauri::command]
-async fn download_to_pc(app: AppHandle, url: String, id: i64, ext: Option<String>) -> Result<String, String> {
+async fn download_to_pc(app: AppHandle, window: tauri::WebviewWindow, url: String, id: i64, ext: Option<String>) -> Result<String, String> {
     use futures_util::StreamExt;
     use std::io::Write;
 
@@ -215,9 +238,26 @@ async fn download_to_pc(app: AppHandle, url: String, id: i64, ext: Option<String
         .user_agent("films-desktop")
         .build()
         .map_err(|e| e.to_string())?;
-    let resp = client.get(&url).send().await.map_err(|e| e.to_string())?;
+    let mut req = client.get(&url);
+    // Authenticate as the logged-in user (Cloudflare Access) via the webview cookie.
+    if let Some(cookie) = cf_cookie_header(&window) {
+        req = req.header(reqwest::header::COOKIE, cookie);
+    }
+    let resp = req.send().await.map_err(|e| e.to_string())?;
     if !resp.status().is_success() {
         return Err(format!("Download failed (HTTP {})", resp.status()));
+    }
+    // A native client has no login session, so an auth wall (Cloudflare Access)
+    // redirects to a login page. Refuse to save that as if it were the film.
+    let final_host = resp.url().host_str().unwrap_or("").to_string();
+    let ctype = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    if final_host.contains("cloudflareaccess.com") || ctype.starts_with("text/html") {
+        return Err("Cloudflare Access blocked the app — it has no login session. A CF Access service token is needed for native download / mpv.".to_string());
     }
     let total = resp.content_length().unwrap_or(0);
     let mut file = std::fs::File::create(&part).map_err(|e| e.to_string())?;

@@ -1,7 +1,7 @@
 {
   "name": "films-desktop",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Tauri desktop wrapper for films.chrisj.uk — opens films in mpv / the OS default player.",
   "scripts": {
     "tauri": "tauri",

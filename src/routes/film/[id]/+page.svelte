@@ -200,17 +200,28 @@
   // release" stays enabled as the manual override.
   // In library per the live Radarr view OR the immediate film_download snapshot
   // (the snapshot means the button is right even before the slow Radarr call).
-  let inLibrary = $derived(!!(radarr?.hasFile || film.download === 'downloaded'));
+  // Live Radarr is authoritative once loaded; the film_download snapshot is only a
+  // fast first paint (it can be stale — e.g. a film removed from Radarr).
+  let inLibrary = $derived(radarr ? !!radarr.hasFile : film.download === 'downloaded');
   let dlBtn = $derived.by(() => {
     if (downloadState === 'loading') return { label: 'Sending…', disabled: true, icon: 'sync', spin: true };
-    if (radarr?.queue) {
-      const p = radarr.queue.progress;
-      const importing = radarr.queue.state === 'importPending' || radarr.queue.state === 'importing';
-      return { label: importing ? 'Importing…' : `Downloading${p != null ? ' ' + p + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
+    if (radarr) {                                     // live view known → trust it
+      if (radarr.hasFile) return { label: 'In library', disabled: true, icon: 'check', spin: false };
+      if (radarr.queue) {
+        const p = radarr.queue.progress;
+        const importing = radarr.queue.state === 'importPending' || radarr.queue.state === 'importing';
+        return { label: importing ? 'Importing…' : `Downloading${p != null ? ' ' + p + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
+      }
+      if (radarr.qb) return { label: radarr.qb.done ? 'Importing…' : `Downloading ${radarr.qb.progress}%…`, disabled: true, icon: 'sync', spin: true };
+      if (!radarr.present) return { label: 'Download', disabled: false, icon: 'download', spin: false };   // gone from Radarr → re-grab
+      if (downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
+      if (radarr.monitored) return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
+      return { label: 'Download', disabled: false, icon: 'download', spin: false };
     }
-    if (radarr?.qb) return { label: radarr.qb.done ? 'Importing…' : `Downloading ${radarr.qb.progress}%…`, disabled: true, icon: 'sync', spin: true };
+    // Radarr not loaded yet → first paint from the snapshot.
+    if (film.download === 'downloaded') return { label: 'In library', disabled: true, icon: 'check', spin: false };
     if (film.download === 'downloading') return { label: `Downloading${film.download_progress != null ? ' ' + film.download_progress + '%' : ''}…`, disabled: true, icon: 'sync', spin: true };
-    if ((radarr?.present && radarr?.monitored) || film.download === 'wanted' || downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
+    if (film.download === 'wanted' || downloadState === 'queued') return { label: 'Requested…', disabled: true, icon: 'check', spin: false };
     return { label: 'Download', disabled: false, icon: 'download', spin: false };
   });
   async function downloadFilm() {
@@ -473,10 +484,11 @@
             </div>
           {/if}
         </div>
+        <button class="btn" class:primary={!watchable} onclick={downloadFilm} disabled={dlBtn.disabled} aria-busy={dlBtn.spin}><Icon name={dlBtn.icon} size={16} spin={dlBtn.spin} /> {dlBtn.label}</button>
         {#if inLibrary}
           <div class="watch-split has-caret" bind:this={dlSplitEl}>
-            <a class="btn" href="/api/file/{film.id_tspdt}" download><Icon name="download" size={16} /> Download</a>
-            <button class="btn caret" aria-label="Download options" aria-expanded={dlMenu} onclick={openDlMenu}><Icon name="chevron" size={15} /></button>
+            <a class="btn ghost2" href="/api/file/{film.id_tspdt}" download><Icon name="download" size={16} /> Save a copy</a>
+            <button class="btn ghost2 caret" aria-label="Copy options" aria-expanded={dlMenu} onclick={openDlMenu}><Icon name="chevron" size={15} /></button>
             {#if dlMenu}
               <div class="watch-menu" role="menu">
                 <a class="wm-item" href="/api/file/{film.id_tspdt}" download onclick={() => dlMenu = false}><Icon name="download" size={14} /> Download file (best encode)</a>
@@ -494,10 +506,8 @@
               </div>
             {/if}
           </div>
-        {:else}
-          <button class="btn" class:primary={!watchable} onclick={downloadFilm} disabled={dlBtn.disabled} aria-busy={dlBtn.spin}><Icon name={dlBtn.icon} size={16} spin={dlBtn.spin} /> {dlBtn.label}</button>
         {/if}
-        <button class="btn" class:primary={!watchable} onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
+        <button class="btn" class:primary={!watchable} class:ghost2={watchable} onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching Radarr…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn ghost2" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
 
