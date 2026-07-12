@@ -27,3 +27,28 @@ commands.allow = ["local_file"]
 identifier = "allow-download-to-pc"
 description = "Allow the films site to download (preload) a film to this device."
 commands.allow = ["download_to_pc"]
+
+[[permission]]
+identifier = "allow-local-downloads"
+description = "Allow the films site to list films saved on this device."
+commands.allow = ["local_downloads"]
+
+[[permission]]
+identifier = "allow-reveal-file"
+description = "Allow the films site to reveal a saved film in the file manager."
+commands.allow = ["reveal_file"]
+
+[[permission]]
+identifier = "allow-open-downloads-dir"
+description = "Allow the films site to open the Save-to-PC folder."
+commands.allow = ["open_downloads_dir"]
+
+[[permission]]
+identifier = "allow-pick-folder"
+description = "Allow the films site to show a native folder picker."
+commands.allow = ["pick_folder"]
+
+[[permission]]
+identifier = "allow-move-local-file"
+description = "Allow the films site to move a saved film to another folder."
+commands.allow = ["move_local_file"]
