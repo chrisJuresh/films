@@ -17,6 +17,27 @@
     catch (e) { toast('Could not open the folder: ' + (typeof e === 'string' ? e : e?.message || 'unknown error'), 'error', 6000); }
   }
 
+  // Per-film "move to another folder" progress, fed by films-move-progress events.
+  let moves = $state({});
+  async function moveFilm(id) {
+    const core = window.__TAURI__?.core;
+    if (!core) return;
+    let dir;
+    try { dir = await core.invoke('pick_folder'); }
+    catch (e) { toast('Folder picker failed: ' + (typeof e === 'string' ? e : 'unknown error'), 'error'); return; }
+    if (!dir) return;
+    moves = { ...moves, [id]: { pct: 0, done: false, error: null } };
+    try {
+      await core.invoke('move_local_file', { id, destDir: dir });
+      await refreshLocal();
+      const m = { ...moves }; delete m[id]; moves = m;
+      toast('Moved to ' + dir, 'ok');
+    } catch (e) {
+      const m = { ...moves }; delete m[id]; moves = m;
+      toast('Move failed: ' + (typeof e === 'string' ? e : 'unknown error'), 'error', 6000);
+    }
+  }
+
   /* ---- Radarr (server-side) downloads ----
      Counts come from the layout load (data.downloads); the four lists from this
      page's load. Locally-cancelled ids are filtered until Radarr's snapshot
@@ -99,7 +120,15 @@
     const tick = () => { if (document.visibilityState === 'visible') invalidateAll(); };
     const timer = setInterval(tick, 15000);
     document.addEventListener('visibilitychange', tick);
-    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); };
+    let unlistenMove;
+    if (isTauri && window.__TAURI__?.event?.listen) {
+      window.__TAURI__.event.listen('films-move-progress', (e) => {
+        const d = e.payload; if (!d || d.id == null) return;
+        const pct = d.total ? Math.round((d.received / d.total) * 100) : (d.done ? 100 : 0);
+        moves = { ...moves, [d.id]: { pct, done: !!d.done, error: d.error || null } };
+      }).then((u) => { unlistenMove = u; }).catch(() => {});
+    }
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', tick); unlistenMove?.(); };
   });
 </script>
 
@@ -144,7 +173,7 @@
               <LocalRow id={x.id} film={x.film} kind="incomplete" path={x.path} size={x.size} />
             {/each}
             {#each localSaved as x (x.id)}
-              <LocalRow id={x.id} film={x.film} kind="saved" path={x.path} size={x.size} />
+              <LocalRow id={x.id} film={x.film} kind="saved" path={x.path} size={x.size} move={moves[x.id] || null} onmove={() => moveFilm(x.id)} />
             {/each}
           </div>
         {:else}

@@ -34,3 +34,23 @@ export async function initDownloadTracker() {
 export function markDownloadStarted(id) {
   downloads.update((m) => ({ ...m, [id]: { pct: 0, done: false, error: null } }));
 }
+
+/* Desktop app: mpv reports the position it stopped at (via a `mpv-progress`
+   event when it quits) so the site's "watched %" updates for mpv sessions too —
+   the browser player can't see into an external mpv. Posts to the playback API. */
+let _mpvListening = false;
+export async function initMpvProgress() {
+  const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
+  if (_mpvListening || !t?.event?.listen) return;
+  _mpvListening = true;
+  await t.event.listen('mpv-progress', async (e) => {
+    const d = e.payload;
+    if (!d || d.id == null || !(d.position > 0)) return;
+    try {
+      await fetch(`/api/playback/${d.id}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ position: d.position })
+      });
+    } catch { /* best-effort */ }
+  });
+}

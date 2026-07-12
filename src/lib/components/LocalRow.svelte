@@ -8,10 +8,13 @@
   // A "Save to PC" download row (desktop app). kind: 'saving' (live %), 'error'
   // (failed), 'incomplete' (a leftover .part — interrupted save), 'saved' (on
   // disk, playable). film may be null until metadata resolves; fall back to "Film #id".
-  let { id, film = null, kind = 'saving', pct = 0, error = null, path = null, size = null } = $props();
+  let { id, film = null, kind = 'saving', pct = 0, error = null, path = null, size = null, move = null, onmove = null } = $props();
   let poster = $state(null);
   let busy = $state(false);
   let title = $derived(film ? displayTitle(film.title) : `Film #${id}`);
+  let moving = $derived(!!move && !move.done);   // a move-to-folder is in progress
+  let movePct = $derived(move?.pct ?? 0);
+  const doMove = (e) => { e.preventDefault(); e.stopPropagation(); onmove?.(); };
   const fmtSize = (b) => !b ? '' : (b / 1e9 >= 1 ? (b / 1e9).toFixed(1) + ' GB' : Math.round(b / 1e6) + ' MB');
 
   onMount(() => {
@@ -54,10 +57,13 @@
       {#if kind === 'saving'}Saving to this PC…
       {:else if kind === 'error'}Save failed
       {:else if kind === 'incomplete'}Incomplete save{size ? ' · ' + fmtSize(size) + ' so far' : ''}
+      {:else if moving}Moving to another folder…
       {:else}Saved on this PC{size ? ' · ' + fmtSize(size) : ''}{/if}
     </div>
     {#if kind === 'saving'}
       <div class="bar" class:indet={!pct}><span style={pct ? `width:${pct}%` : undefined}></span></div>
+    {:else if moving}
+      <div class="bar" class:indet={!movePct}><span style={movePct ? `width:${movePct}%` : undefined}></span></div>
     {/if}
   </div>
   <div class="end">
@@ -72,10 +78,15 @@
       </button>
       <span class="tag warn" title="Interrupted — open the film and hit Save to PC to resume">resume on film page</span>
       <span class="go" aria-hidden="true"><Icon name="chevron" size={16} /></span>
+    {:else if moving}
+      <span class="pct">{movePct ? movePct + '%' : '…'}</span>
     {:else}
       <button class="icon-btn" onclick={reveal} disabled={busy} aria-label="Show in folder" title="Show in folder">
         <Icon name="folder" size={15} />
       </button>
+      {#if onmove}
+        <button class="movebtn" onclick={doMove} disabled={busy} title="Move this file to another folder">Move…</button>
+      {/if}
       <button class="play" onclick={play} disabled={busy} title="Play the saved copy in mpv">
         <Icon name="play" size={13} stroke={2.2} /> mpv
       </button>
@@ -108,6 +119,10 @@
     color: var(--text); cursor: pointer; transition: all .14s; }
   .play:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   .play:disabled { opacity: .5; cursor: default; }
+  .movebtn { flex: none; font-size: 12.5px; font-weight: 600; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: pointer; transition: all .14s; }
+  .movebtn:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+  .movebtn:disabled { opacity: .5; cursor: default; }
   .icon-btn { width: 32px; height: 32px; flex: none; border-radius: 999px; display: grid; place-items: center;
     border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); cursor: pointer; transition: all .14s; }
   .icon-btn:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }

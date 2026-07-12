@@ -17,6 +17,7 @@
   let cfAuth = $state(null);          // { cfId, cfSecret } CF Access service token (if configured)
   onMount(() => {
     const t = window.__TAURI__;
+    try { saveDir = localStorage.getItem('films-save-dir') || ''; } catch { /* ignore */ }
     if (t?.core?.invoke) {
       t.core.invoke('check_update').then((u) => { updateInfo = u; }).catch(() => {});
       fetch('/api/app-auth').then((r) => r.json()).then((a) => { cfAuth = a; }).catch(() => {});
@@ -67,6 +68,9 @@
   let splitEl;                        // the watch split container (for click-away)
   let dlMenu = $state(false);         // Download split-button dropdown open?
   let dlSplitEl;
+  let saveMenu = $state(false);       // "Save to PC" folder dropdown open?
+  let saveSplitEl;
+  let saveDir = $state('');           // chosen default "Save to PC" folder ('' = app folder)
   let grabLinks = $state(null);       // { magnet, hasTorrent } for in-library download
 
   // Resolution rank so we can sort/mark quality across Radarr ("Bluray-1080p")
@@ -106,7 +110,7 @@
     loadedId = id; meta = null; downloadState = 'idle'; radarr = null;
     watchInfo = null; playing = false; savedAt = 0; releases = null; releasesLoading = false;
     grabbing = null; cancelling = false; releasesFallback = false; releasesNote = null; sortBy = 'quality'; watchMenu = false;
-    dlMenu = false; grabLinks = null; pbCleared = false; certsOpen = false;
+    dlMenu = false; saveMenu = false; grabLinks = null; pbCleared = false; certsOpen = false;
     localPath = null;   // dlToPc is derived from the global store; don't reset it here
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
     loadRadarr(id); loadWatch(id);
@@ -160,26 +164,43 @@
     const t = typeof window !== 'undefined' ? window.__TAURI__ : null;
     if (t?.core?.invoke) {
       const target = localPath || new URL(`/api/source/${film.id_tspdt}`, window.location.origin).href;
-      t.core.invoke('open_in_player', { url: target, title: displayTitle(film.title), prefer, cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret })
+      const resume = Number(data.film.playback?.position) || 0;   // resume in mpv + report position back
+      t.core.invoke('open_in_player', { url: target, title: displayTitle(film.title), prefer, filmId: film.id_tspdt, resume, cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret })
         .then((used) => toast(`Opening in ${used}…`, 'ok'))
         .catch((e) => toast(String(e), 'error', 7000));   // e.g. "mpv isn't installed…"
       return;
     }
     openPlayer();
   }
-  async function saveToPc() {
+  // dest: a folder string to save into; anything else (or omitted) → the saved default.
+  async function saveToPc(dest) {
     const t = window.__TAURI__;
     if (!t?.core?.invoke) return;
+    saveMenu = false;
     markDownloadStarted(film.id_tspdt);   // progress tracked in the global store (survives navigation)
     const id = film.id_tspdt;
     const url = new URL(`/api/source/${id}`, window.location.origin).href;
     try {
-      const p = await t.core.invoke('download_to_pc', { url, id, ext: 'mkv', cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret });
+      const p = await t.core.invoke('download_to_pc', { url, id, ext: 'mkv', dest: (typeof dest === 'string' ? dest : saveDir) || null, cfId: cfAuth?.cfId, cfSecret: cfAuth?.cfSecret });
       if (loadedId === id) localPath = p;
       toast('Saved to this PC — it now plays locally.', 'ok');
     } catch (e) {
       toast('Download failed: ' + e, 'error', 7000);
     }
+  }
+  const folderName = (p) => (p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || p;
+  async function chooseSaveFolder() {
+    const t = window.__TAURI__;
+    if (!t?.core?.invoke) return;
+    saveMenu = false;
+    try {
+      const dir = await t.core.invoke('pick_folder');
+      if (dir) { saveDir = dir; try { localStorage.setItem('films-save-dir', dir); } catch { /* ignore */ } saveToPc(dir); }
+    } catch (e) { toast('Could not open the folder picker: ' + e, 'error', 6000); }
+  }
+  function useAppFolder() {
+    saveDir = ''; try { localStorage.removeItem('films-save-dir'); } catch { /* ignore */ }
+    saveToPc('');
   }
   // The specific "watch this way" options behind the Watch button's caret.
   let watchOptions = $derived.by(() => {
@@ -432,6 +453,7 @@
 <svelte:window onclick={(e) => {
   if (watchMenu && splitEl && !splitEl.contains(e.target)) watchMenu = false;
   if (dlMenu && dlSplitEl && !dlSplitEl.contains(e.target)) dlMenu = false;
+  if (saveMenu && saveSplitEl && !saveSplitEl.contains(e.target)) saveMenu = false;
 }} />
 
 <div class="backdrop" class:img={ready && meta.backdrop}
@@ -559,7 +581,25 @@
             {:else if dlToPc?.done}
               <div class="app-dl"><span>Finishing…</span></div>
             {:else}
-              <button class="btn sm" onclick={saveToPc}><Icon name="hdd" size={14} /> Save to PC</button>
+              <div class="watch-split has-caret" bind:this={saveSplitEl}>
+                <button class="btn sm" onclick={() => saveToPc(saveDir)} title={saveDir ? 'Save to ' + saveDir : 'Save to the app folder'}><Icon name="hdd" size={14} /> Save to PC{#if saveDir} · {folderName(saveDir)}{/if}</button>
+                <button class="btn sm caret" aria-label="Choose save folder" aria-expanded={saveMenu} onclick={() => saveMenu = !saveMenu}><Icon name="chevron" size={14} /></button>
+                {#if saveMenu}
+                  <div class="watch-menu" role="menu">
+                    <button class="wm-item" role="menuitem" onclick={useAppFolder}>
+                      <span class="wm-text"><span class="wm-label">App folder{#if !saveDir} · default{/if}</span><span class="wm-hint">the desktop app's own cache</span></span>
+                    </button>
+                    {#if saveDir}
+                      <button class="wm-item" role="menuitem" onclick={() => saveToPc(saveDir)}>
+                        <span class="wm-text"><span class="wm-label">{folderName(saveDir)} · default</span><span class="wm-hint" title={saveDir}>{saveDir}</span></span>
+                      </button>
+                    {/if}
+                    <button class="wm-item" role="menuitem" onclick={chooseSaveFolder}>
+                      <span class="wm-text"><span class="wm-label">Choose a folder…</span><span class="wm-hint">picks it, and remembers as the default</span></span>
+                    </button>
+                  </div>
+                {/if}
+              </div>
             {/if}
           {/if}
         </div>

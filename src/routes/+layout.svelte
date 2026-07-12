@@ -4,7 +4,7 @@
   import { browser } from '$app/environment';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { counts as countsStore, theme, initDownloadTracker } from '$lib/stores.js';
+  import { counts as countsStore, theme, initDownloadTracker, initMpvProgress } from '$lib/stores.js';
   import { colourLabel } from '$lib/util.js';
   import Toast from '$lib/components/Toast.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -51,6 +51,7 @@
     if (tauri?.core?.invoke) {
       tauri.core.invoke('check_update').then((u) => { update = u; }).catch(() => {});
       initDownloadTracker();   // track "Save to PC" progress app-wide
+      initMpvProgress();       // report mpv playback position back → "watched %"
     }
     return () => mq.removeEventListener('change', onWide);
   });
