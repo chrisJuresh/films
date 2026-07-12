@@ -1,6 +1,6 @@
 [package]
 name = "films-desktop"
-version = "0.1.10"
+version = "0.1.11"
 description = "Film Index desktop"
 edition = "2021"
 

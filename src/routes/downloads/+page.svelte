@@ -13,7 +13,8 @@
 
   async function openDownloadsFolder() {
     try { await window.__TAURI__.core.invoke('open_downloads_dir'); }
-    catch (e) { toast(e?.message || 'Could not open the folder (update the app to v0.1.9+).', 'error'); }
+    // Tauri rejects with the Err STRING (not an Error), so surface it directly.
+    catch (e) { toast('Could not open the folder: ' + (typeof e === 'string' ? e : e?.message || 'unknown error'), 'error', 6000); }
   }
 
   /* ---- Radarr (server-side) downloads ----

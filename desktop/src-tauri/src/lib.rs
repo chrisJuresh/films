@@ -109,7 +109,13 @@ fn open_default(url: &str) -> Result<String, String> {
     #[cfg(target_os = "macos")]
     Command::new("open").arg(url).spawn().map_err(|e| e.to_string())?;
     #[cfg(target_os = "windows")]
-    Command::new("cmd").args(["/C", "start", "", url]).spawn().map_err(|e| e.to_string())?;
+    {
+        // Go through cmd's `start` (always in System32/PATH) rather than
+        // explorer.exe, which lives in C:\Windows and isn't reliably on PATH.
+        use std::os::windows::process::CommandExt;
+        Command::new("cmd").args(["/C", "start", "", url]).creation_flags(0x08000000)
+            .spawn().map_err(|e| e.to_string())?;
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
     Command::new("xdg-open").arg(url).spawn().map_err(|e| e.to_string())?;
     Ok("system default".to_string())
@@ -276,48 +282,29 @@ fn local_downloads(app: AppHandle) -> Vec<LocalDl> {
     out
 }
 
-/// Open the OS file manager at a saved file (selecting it) or a folder.
-/// Windows: explorer /select; macOS: open -R; Linux: xdg-open the directory.
-fn show_in_manager(path: &std::path::Path, select: bool) -> Result<(), String> {
+/// Reveal a saved film in the file manager — highlighting it where we can
+/// (Windows explorer /select, macOS open -R), else falling back to just opening
+/// its containing folder with the default handler (which is the reliable path).
+#[tauri::command]
+fn reveal_file(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        let mut c = std::process::Command::new("explorer");
-        if select { c.arg(format!("/select,{}", path.display())); } else { c.arg(path); }
-        c.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        c.spawn().map_err(|e| e.to_string())?; // explorer exits nonzero even on success; don't wait
-        return Ok(());
+        if Command::new("explorer").arg(format!("/select,{}", p.display()))
+            .creation_flags(0x08000000).spawn().is_ok() { return Ok(()); }
     }
     #[cfg(target_os = "macos")]
-    {
-        let mut c = std::process::Command::new("open");
-        if select { c.arg("-R"); }
-        c.arg(path);
-        c.spawn().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[cfg(all(unix, not(target_os = "macos")))]
-    {
-        // xdg-open can't select a file, so open the containing directory.
-        let target = if select { path.parent().unwrap_or(path) } else { path };
-        std::process::Command::new("xdg-open").arg(target).spawn().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    #[allow(unreachable_code)]
-    Err("Unsupported platform".into())
+    { if Command::new("open").arg("-R").arg(p).spawn().is_ok() { return Ok(()); } }
+    let dir = p.parent().unwrap_or(p);
+    open_default(&dir.to_string_lossy()).map(|_| ())
 }
 
-/// Reveal a specific saved film in the file manager.
-#[tauri::command]
-fn reveal_file(path: String) -> Result<(), String> {
-    show_in_manager(std::path::Path::new(&path), true)
-}
-
-/// Open the folder where "Save to PC" downloads live.
+/// Open the "Save to PC" folder in the OS file manager.
 #[tauri::command]
 fn open_downloads_dir(app: AppHandle) -> Result<(), String> {
     let d = cache_dir(&app)?;
-    show_in_manager(&d, false)
+    open_default(&d.to_string_lossy()).map(|_| ())
 }
 
 #[derive(Serialize, Clone)]

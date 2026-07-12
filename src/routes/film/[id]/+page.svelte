@@ -51,6 +51,8 @@
   let watchTimer;
   let playing = $state(false);        // inline browser player open
   let videoEl;
+  let playerKey = $state(0);          // bump to remount <video> (switch to the encoded copy)
+  let openedEncoded = $state(false);  // was a seekable copy already present when the player opened?
   let savedAt = 0;
   let pbCleared = $state(false);      // user reset watch progress
   let certsOpen = $state(false);      // age-rating breakdown expanded
@@ -374,12 +376,20 @@
     } catch (e) { toast(e.message || 'Encode failed to start.', 'error', 4600); }
   }
   function openPlayer() {
+    openedEncoded = !!watchInfo?.browser;   // did a seekable (encoded) copy already exist when we opened?
     playing = true;
     setTimeout(() => {
       const pos = data.film.playback?.position;
       if (videoEl && pos > 5 && !pbCleared && (!runtimeSec || pos < runtimeSec)) videoEl.currentTime = pos;   // resume where you left off
       videoEl?.play?.().catch(() => {});
     }, 60);
+  }
+  // Remount the <video> so /api/stream re-serves — used to switch to the encoded
+  // copy the moment it finishes (mid-watch), giving smooth seeking + full quality.
+  function reloadEncoded() {
+    openedEncoded = true;
+    playerKey++;
+    setTimeout(() => videoEl?.play?.().catch(() => {}), 60);
   }
   function onTimeUpdate() {
     // Only persist progress for a SEEKABLE source (an encoded copy or a directly
@@ -619,8 +629,27 @@
 
   {#if playing}
     <section class="player">
-      <video bind:this={videoEl} src="/api/stream/{film.id_tspdt}" controls autoplay playsinline ontimeupdate={onTimeUpdate}></video>
-      {#if !watchInfo?.browser}<div class="rr-meta">Live iGPU transcode · seeking is limited until an encoded copy exists.</div>{/if}
+      {#key playerKey}
+        <video bind:this={videoEl} src="/api/stream/{film.id_tspdt}" controls autoplay playsinline ontimeupdate={onTimeUpdate}></video>
+      {/key}
+      {#if !watchInfo?.browser}
+        <div class="tc-notice">
+          <Icon name="alert" size={18} />
+          <div class="tc-text">
+            <b>Live transcode — seeking is limited</b>
+            <span>Plays instantly, but you can't scrub freely and quality is capped. Encode a one-time copy for smooth seeking and full quality, then watch that instead.</span>
+          </div>
+          {#if watchInfo?.encode?.state === 'running'}
+            <div class="tc-prog"><Icon name="sync" size={14} spin /> Encoding · {watchInfo.encode.percent}%</div>
+          {:else if watchInfo?.encode?.state === 'error'}
+            <button class="tc-btn" onclick={startEncode}><Icon name="rotate" size={14} /> Retry encode</button>
+          {:else}
+            <button class="tc-btn" onclick={startEncode}><Icon name="video" size={14} /> Encode a copy</button>
+          {/if}
+        </div>
+      {:else if !openedEncoded}
+        <div class="tc-ready"><Icon name="check" size={15} stroke={2.6} /> <span>The seekable, full-quality copy is ready.</span> <button onclick={reloadEncoded}>Switch to it →</button></div>
+      {/if}
     </section>
   {/if}
 
@@ -846,6 +875,25 @@
   .wm-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .wm-label { font-size: 13px; }
   .wm-hint { font-size: 11px; color: var(--muted); }
+
+  .tc-notice { display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 14px 16px;
+    border-radius: 12px; border: 1px solid color-mix(in srgb, #d99a2b 45%, var(--border));
+    background: color-mix(in srgb, #d99a2b 12%, var(--surface)); }
+  .tc-notice > :global(.icon) { color: #d99a2b; flex: none; }
+  .tc-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+  .tc-text b { font-size: 14px; }
+  .tc-text span { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+  .tc-btn { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; border-radius: 999px;
+    border: none; background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 13px; cursor: pointer; }
+  .tc-btn:hover { filter: brightness(1.07); }
+  .tc-prog { flex: none; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #d99a2b; }
+  .tc-ready { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 12px 16px; border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--free) 45%, var(--border)); background: color-mix(in srgb, var(--free) 12%, var(--surface)); font-size: 13.5px; }
+  .tc-ready > :global(.icon) { color: var(--free); flex: none; }
+  .tc-ready span { flex: 1; min-width: 0; }
+  .tc-ready button { flex: none; background: none; border: none; color: var(--accent); font-weight: 600; cursor: pointer; font-size: 13.5px; }
+  .tc-ready button:hover { text-decoration: underline; }
+  @media (max-width: 620px) { .tc-notice { flex-wrap: wrap; } .tc-btn, .tc-prog { margin-left: auto; } }
 
   .player { margin-top: 30px; }
   .player video { width: 100%; max-height: 78vh; border-radius: 16px; background: #000;
