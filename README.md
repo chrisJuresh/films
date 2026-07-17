@@ -36,4 +36,3 @@ aggregated and ranked — Lives at **https://films.chrisj.uk**.
    npm run dev        # http://localhost:5178
    ```
 
-Data source: [They Shoot Pictures, Don't They?](https://theyshootpictures.com)
