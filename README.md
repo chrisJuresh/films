@@ -1,8 +1,7 @@
 # films
 
-A film catalogue for the **They Shoot Pictures, Don't They?** rankings (the
-aggregated "1,000 Greatest Films" poll) — ~26,500 films with their rank across
-every published edition. Lives at **https://films.chrisj.uk**.
+A ~26,500 film catalogue
+aggregated and ranked — Lives at **https://films.chrisj.uk**.
 
 ## Layout
 
