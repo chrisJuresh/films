@@ -13,7 +13,7 @@ export function GET({ params }) {
 
 export async function POST({ params }) {
   const id = Number(params.id);
-  if (!(id > 0)) throw error(400, 'A valid film id is required.');
+  if (!Number.isSafeInteger(id) || id === 0) throw error(400, 'A valid film id is required.');
   const running = encodeJob(id);
   if (running && running.state === 'running') return json({ state: 'running', percent: running.percent });
 

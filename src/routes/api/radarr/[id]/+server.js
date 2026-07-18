@@ -7,7 +7,7 @@ import { downloadWithRadarr, getRadarrStatus, cancelRadarr, RadarrError } from '
 // { present: false } so the UI hides the panel gracefully.
 export async function GET({ params }) {
   const id = Number(params.id);
-  if (!Number.isInteger(id) || id < 1) return json({ present: false });
+  if (!Number.isSafeInteger(id) || id === 0) return json({ present: false });
   const film = getFilmBasic(id);
   if (!film?.imdb_id) return json({ present: false });
   try {
@@ -20,7 +20,7 @@ export async function GET({ params }) {
 
 export async function POST({ params }) {
   const id = Number(params.id);
-  if (!Number.isInteger(id) || id < 1) {
+  if (!Number.isSafeInteger(id) || id === 0) {
     return json({ message: 'A valid film ID is required.' }, { status: 400 });
   }
 
@@ -41,7 +41,7 @@ export async function POST({ params }) {
 // Cancel an in-progress download (remove it from Radarr's queue + client).
 export async function DELETE({ params }) {
   const id = Number(params.id);
-  if (!Number.isInteger(id) || id < 1) return json({ message: 'A valid film ID is required.' }, { status: 400 });
+  if (!Number.isSafeInteger(id) || id === 0) return json({ message: 'A valid film ID is required.' }, { status: 400 });
   const film = getFilmBasic(id);
   if (!film?.imdb_id) return json({ message: 'Film not found.' }, { status: 404 });
   try {

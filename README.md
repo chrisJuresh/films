@@ -9,6 +9,8 @@ aggregated and ranked — Lives at **https://films.chrisj.uk**.
   to browse the catalogue: poster-grid, multi-select filters (decade, genre,
   country, colour), search, per-user watchlist / seen tracking, and a per-film
   page with ranking history plus IMDb/TMDB metadata (poster art, cast, ratings).
+  Movies outside the ranking can be added from TMDB; they sit after the ranked
+  catalogue and reconcile automatically if a later TSPDT sheet includes them.
 - **`sync/`** — the data pipeline. `tspdt_sync.py` downloads the TSPDT
   *StartingList* and syncs it into a local SQLite database (`tspdt.db`), keyed on
   each film's stable `idTSPDT` so it handles new/removed/changed entries

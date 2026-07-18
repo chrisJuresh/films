@@ -96,7 +96,7 @@
     {#if data.onlySite.length}
       <ul class="films">
         {#each data.onlySite as f (f.id_tspdt)}
-          <li><a href="/film/{f.id_tspdt}"><span class="rk">#{f.rank}</span><span class="ti">{displayTitle(f.title)}</span><span class="yr">{f.year}</span></a></li>
+          <li><a href="/film/{f.id_tspdt}"><span class="rk">{f.manually_added ? 'Added' : '#' + f.rank}</span><span class="ti">{displayTitle(f.title)}</span><span class="yr">{f.year}</span></a></li>
         {/each}
       </ul>
     {:else}<p class="empty">Nothing here — your site “seen” list is all in Letterboxd.</p>{/if}
@@ -108,7 +108,7 @@
     {#if data.lbRemoved.length}
       <ul class="films">
         {#each data.lbRemoved as f (f.id_tspdt)}
-          <li><a href="/film/{f.id_tspdt}"><span class="rk">#{f.rank}</span><span class="ti">{displayTitle(f.title)}</span><span class="yr">{f.year}</span></a></li>
+          <li><a href="/film/{f.id_tspdt}"><span class="rk">{f.manually_added ? 'Added' : '#' + f.rank}</span><span class="ti">{displayTitle(f.title)}</span><span class="yr">{f.year}</span></a></li>
         {/each}
       </ul>
     {:else}<p class="empty">Nothing here.</p>{/if}

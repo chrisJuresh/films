@@ -6,7 +6,7 @@ import { serverTorrentsFor } from '$lib/server/radarr.js';
 // For the in-library Download menu. Best-effort — [] if qB is off/unreachable.
 export async function GET({ params }) {
   const id = Number(params.id);
-  const film = id > 0 ? getFilmBasic(id) : null;
+  const film = Number.isSafeInteger(id) && id !== 0 ? getFilmBasic(id) : null;
   if (!film?.imdb_id) throw error(404, 'Film not found.');
   try {
     return json({ torrents: await serverTorrentsFor(film.imdb_id) });

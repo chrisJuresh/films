@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -61,6 +62,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -318,6 +320,7 @@ CREATE TABLE IF NOT EXISTS films (
     id_tspdt          INTEGER PRIMARY KEY,   -- TSPDT stable unique id (natural key)
     imdb_id           TEXT,                  -- e.g. tt0133191
     imdb_url          TEXT,
+    tmdb_id           INTEGER,               -- populated for manual additions / enriched rows
     is_new            INTEGER NOT NULL DEFAULT 0,
     director          TEXT,
     title             TEXT,
@@ -348,6 +351,21 @@ CREATE TABLE IF NOT EXISTS rankings (
     PRIMARY KEY (id_tspdt, edition_id)
 );
 
+-- Durable audit for movies added through the app. Active rows use a negative
+-- id_tspdt; after a future spreadsheet match, merged_into records the official
+-- positive TSPDT id and the temporary films row is retired.
+CREATE TABLE IF NOT EXISTS manual_films (
+    tmdb_id     INTEGER PRIMARY KEY,
+    id_tspdt    INTEGER NOT NULL UNIQUE,
+    imdb_id     TEXT,
+    title       TEXT NOT NULL,
+    year        TEXT,
+    added_by    TEXT,
+    added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    merged_into INTEGER,
+    merged_at   TEXT
+);
+
 CREATE TABLE IF NOT EXISTS notes (
     line_no  INTEGER PRIMARY KEY,            -- row in the source Notes sheet
     content  TEXT NOT NULL
@@ -365,6 +383,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     reactivated   INTEGER,
     removed       INTEGER,
     duplicates    INTEGER,
+    reconciled    INTEGER NOT NULL DEFAULT 0,
     duration_sec  REAL
 );
 
@@ -372,6 +391,8 @@ CREATE INDEX IF NOT EXISTS idx_rankings_edition ON rankings(edition_id, position
 CREATE INDEX IF NOT EXISTS idx_films_director   ON films(director);
 CREATE INDEX IF NOT EXISTS idx_films_present    ON films(removed_at);
 CREATE INDEX IF NOT EXISTS idx_films_imdb       ON films(imdb_id);
+CREATE INDEX IF NOT EXISTS manual_films_active  ON manual_films(id_tspdt) WHERE merged_into IS NULL;
+CREATE INDEX IF NOT EXISTS manual_films_imdb    ON manual_films(imdb_id) WHERE imdb_id IS NOT NULL;
 
 -- HOT PATH: "top films of the newest edition". Partial (only ranked films) +
 -- covering (rank,title,director,year) so the leaderboard query is answered by an
@@ -399,7 +420,160 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA mmap_size = 268435456;")  # 256MB: memory-map for fast reads
     conn.execute("PRAGMA cache_size = -65536;")    # 64MB page cache
     conn.executescript(SCHEMA)                     # setup only -- outside any sync txn
+    # CREATE TABLE IF NOT EXISTS does not add columns to an older database.
+    film_cols = {r[1] for r in conn.execute("PRAGMA table_info(films)")}
+    if "tmdb_id" not in film_cols:
+        conn.execute("ALTER TABLE films ADD COLUMN tmdb_id INTEGER")
+    run_cols = {r[1] for r in conn.execute("PRAGMA table_info(sync_runs)")}
+    if "reconciled" not in run_cols:
+        conn.execute("ALTER TABLE sync_runs ADD COLUMN reconciled INTEGER NOT NULL DEFAULT 0")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_films_tmdb ON films(tmdb_id) WHERE tmdb_id IS NOT NULL")
+    conn.commit()
     return conn
+
+
+# --------------------------------------------------------------------------- #
+# Manual-film reconciliation
+# --------------------------------------------------------------------------- #
+_ARTICLES = {"the", "a", "an", "le", "la", "les", "los", "las", "il", "lo",
+             "der", "die", "das", "ein", "eine", "de", "het", "een", "l'"}
+
+
+def canonical_title(title: str | None) -> str:
+    """Natural/article-suffix titles -> one conservative comparison key."""
+    value = str(title or "").strip()
+    match = re.match(r"^(.*),\s*([^\s,]+)$", value)
+    if match and match.group(2).lower() in _ARTICLES:
+        article = match.group(2)
+        value = article + match.group(1) if article.endswith("'") else f"{article} {match.group(1)}"
+    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _table_exists(cur: sqlite3.Cursor, name: str) -> bool:
+    return cur.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
+
+
+def _copy_rows_to_film(cur: sqlite3.Cursor, table: str, columns: list[str],
+                       source_id: int, target_id: int, replace: bool = True) -> None:
+    """Move rows whose first column is id_tspdt to the official film id."""
+    if not _table_exists(cur, table):
+        return
+    available = {r[1] for r in cur.execute(f"PRAGMA table_info({table})")}
+    columns = [column for column in columns if column in available]
+    if not columns or columns[0] != "id_tspdt":
+        return
+    rows = cur.execute(
+        f"SELECT {','.join(columns)} FROM {table} WHERE id_tspdt=?", (source_id,)
+    ).fetchall()
+    verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
+    placeholders = ",".join("?" for _ in columns)
+    for row in rows:
+        cur.execute(
+            f"{verb} INTO {table}({','.join(columns)}) VALUES({placeholders})",
+            (target_id, *row[1:]),
+        )
+    cur.execute(f"DELETE FROM {table} WHERE id_tspdt=?", (source_id,))
+
+
+def _merge_manual_film(cur: sqlite3.Cursor, manual: sqlite3.Row | tuple,
+                       target_id: int, timestamp: str) -> None:
+    tmdb_id, source_id, _imdb_id, _title, _year = manual
+    cur.execute("UPDATE films SET tmdb_id=COALESCE(tmdb_id,?) WHERE id_tspdt=?", (tmdb_id, target_id))
+
+    # User/global state follows the movie. For the rare conflict, the manually
+    # added row wins: it reflects the more recent interaction with this identity.
+    _copy_rows_to_film(cur, "user_status",
+                       ["id_tspdt", "cf_user", "status", "updated_at"], source_id, target_id)
+    _copy_rows_to_film(cur, "lb_seen",
+                       ["id_tspdt", "cf_user", "state", "lb_date", "imported_at", "updated_at"],
+                       source_id, target_id)
+    _copy_rows_to_film(cur, "playback",
+                       ["id_tspdt", "cf_user", "position", "duration", "updated_at"], source_id, target_id)
+    _copy_rows_to_film(cur, "film_download",
+                       ["id_tspdt", "state", "progress"], source_id, target_id)
+    _copy_rows_to_film(cur, "film_cert",
+                       ["id_tspdt", "country", "cert"], source_id, target_id, replace=False)
+    _copy_rows_to_film(cur, "film_age", ["id_tspdt", "min_age"], source_id, target_id)
+
+    # Keep the richest cached TMDB record and rewrite its local image routes to
+    # the official id. Cached image bytes can be fetched again on first access.
+    if _table_exists(cur, "film_meta"):
+        source_meta = cur.execute(
+            "SELECT level,json,fetched_at FROM film_meta WHERE id_tspdt=?", (source_id,)
+        ).fetchone()
+        target_meta = cur.execute(
+            "SELECT fetched_at FROM film_meta WHERE id_tspdt=?", (target_id,)
+        ).fetchone()
+        if source_meta and (not target_meta or str(source_meta[2]) >= str(target_meta[0])):
+            try:
+                payload = json.loads(source_meta[1])
+                payload["id_tspdt"] = target_id
+                if payload.get("poster_src"):
+                    payload["poster"] = f"/img/poster/{target_id}"
+                if payload.get("backdrop_src"):
+                    payload["backdrop"] = f"/img/backdrop/{target_id}"
+                meta_json = json.dumps(payload, separators=(",", ":"))
+            except (TypeError, ValueError):
+                meta_json = source_meta[1]
+            cur.execute(
+                "INSERT OR REPLACE INTO film_meta(id_tspdt,level,json,fetched_at) VALUES(?,?,?,?)",
+                (target_id, source_meta[0], meta_json, source_meta[2]),
+            )
+        cur.execute("DELETE FROM film_meta WHERE id_tspdt=?", (source_id,))
+
+    # The audit row deliberately has no film FK: it becomes a permanent alias
+    # from the old negative id/TMDB identity to the official TSPDT row.
+    cur.execute(
+        "UPDATE manual_films SET merged_into=?, merged_at=? WHERE tmdb_id=?",
+        (target_id, timestamp, tmdb_id),
+    )
+    cur.execute("DELETE FROM films WHERE id_tspdt=?", (source_id,))
+
+
+def reconcile_manual_films(cur: sqlite3.Cursor, timestamp: str) -> int:
+    manuals = cur.execute(
+        "SELECT tmdb_id,id_tspdt,imdb_id,title,year FROM manual_films WHERE merged_into IS NULL"
+    ).fetchall()
+    if not manuals:
+        return 0
+    incoming = cur.execute("SELECT id_tspdt,imdb_id,title,year FROM stg_films").fetchall()
+    by_imdb: dict[str, list[int]] = {}
+    by_title: dict[str, list[tuple[int, int | None]]] = {}
+    for film_id, imdb_id, title, year in incoming:
+        if imdb_id:
+            by_imdb.setdefault(str(imdb_id), []).append(film_id)
+        key = canonical_title(title)
+        if key:
+            try: film_year = int(year)
+            except (TypeError, ValueError): film_year = None
+            by_title.setdefault(key, []).append((film_id, film_year))
+
+    pairs: list[tuple[tuple, int]] = []
+    used_targets: set[int] = set()
+    for manual in manuals:
+        _tmdb_id, _source_id, imdb_id, title, year = manual
+        target = None
+        strong = by_imdb.get(str(imdb_id), []) if imdb_id else []
+        if len(strong) == 1:
+            target = strong[0]
+        if target is None:
+            candidates = by_title.get(canonical_title(title), [])
+            try: manual_year = int(year)
+            except (TypeError, ValueError): manual_year = None
+            if manual_year is not None:
+                candidates = [c for c in candidates if c[1] is not None and abs(c[1] - manual_year) <= 1]
+            if len(candidates) == 1:
+                target = candidates[0][0]
+        if target is not None and target not in used_targets:
+            used_targets.add(target)
+            pairs.append((manual, target))
+
+    for manual, target in pairs:
+        _merge_manual_film(cur, manual, target, timestamp)
+    return len(pairs)
 
 
 # --------------------------------------------------------------------------- #
@@ -491,16 +665,28 @@ def sync(conn: sqlite3.Connection, snap: dict, source: str,
             (ts,),
         )
 
+        # A movie added through the app may acquire a real TSPDT identity in
+        # this snapshot. Move all of its state to that positive id before the
+        # source lifecycle and ranking maintenance continue.
+        reconciled = reconcile_manual_films(cur, ts)
+
         # 7) films that vanished from the file
         if hard_delete:
-            # delete ALL absent films (incl. ones soft-removed in a prior run)
+            # Delete absent source films, never active manual additions.
             cur.execute(
-                "DELETE FROM films WHERE id_tspdt NOT IN (SELECT id_tspdt FROM stg_films)"
+                """DELETE FROM films
+                   WHERE id_tspdt NOT IN (SELECT id_tspdt FROM stg_films)
+                     AND NOT EXISTS (
+                       SELECT 1 FROM manual_films mf
+                       WHERE mf.id_tspdt=films.id_tspdt AND mf.merged_into IS NULL
+                     )"""
             )
         else:
             cur.execute(
                 "UPDATE films SET removed_at=? WHERE removed_at IS NULL "
-                "AND id_tspdt NOT IN (SELECT id_tspdt FROM stg_films)",
+                "AND id_tspdt NOT IN (SELECT id_tspdt FROM stg_films) "
+                "AND NOT EXISTS (SELECT 1 FROM manual_films mf "
+                "WHERE mf.id_tspdt=films.id_tspdt AND mf.merged_into IS NULL)",
                 (ts,),
             )
         removed = cur.rowcount
@@ -553,14 +739,15 @@ def sync(conn: sqlite3.Connection, snap: dict, source: str,
             "run_at": ts, "source": source, "file_sha256": file_sha,
             "rows_in_file": len(snap["films"]), "inserted": inserted, "updated": updated,
             "unchanged": unchanged, "reactivated": reactivated, "removed": removed,
-            "duplicates": snap.get("duplicates", 0), "duration_sec": duration,
+            "duplicates": snap.get("duplicates", 0), "reconciled": reconciled,
+            "duration_sec": duration,
         }
         cur.execute(
             """INSERT INTO sync_runs(run_at,source,file_sha256,rows_in_file,inserted,
                                      updated,unchanged,reactivated,removed,duplicates,
-                                     duration_sec)
+                                     reconciled,duration_sec)
                VALUES(:run_at,:source,:file_sha256,:rows_in_file,:inserted,:updated,
-                      :unchanged,:reactivated,:removed,:duplicates,:duration_sec)""",
+                      :unchanged,:reactivated,:removed,:duplicates,:reconciled,:duration_sec)""",
             stats,
         )
 
@@ -586,7 +773,7 @@ def report(conn: sqlite3.Connection, stats: dict, n_examples: int) -> None:
 
     print(f"\n{line}\nSYNC SUMMARY\n{line}")
     for k in ("run_at", "rows_in_file", "inserted", "updated", "unchanged",
-              "reactivated", "removed", "duplicates", "duration_sec"):
+              "reactivated", "removed", "duplicates", "reconciled", "duration_sec"):
         print(f"  {k:14} : {stats[k]}")
 
     print(f"\n{line}\nDATABASE SCHEMA (tables, indexes, views)\n{line}")
@@ -702,7 +889,8 @@ def main(argv: list[str] | None = None) -> int:
         stats = sync(conn, snap, source, file_sha, args.hard_delete)
         print(f"[sync]   +{stats['inserted']} new  ~{stats['updated']} changed  "
               f"={stats['unchanged']} same  ^{stats['reactivated']} reactivated  "
-              f"-{stats['removed']} removed  in {stats['duration_sec']}s")
+              f"-{stats['removed']} removed  >{stats['reconciled']} manual merged  "
+              f"in {stats['duration_sec']}s")
         report(conn, stats, args.examples)
     finally:
         conn.close()

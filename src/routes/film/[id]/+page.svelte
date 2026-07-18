@@ -463,7 +463,7 @@
   <a class="back" href="/">← Catalogue</a>
 
   <div class="top">
-    <div class="poster-col"><Poster title={film.title} rank={film.latest_rank} src={ready ? meta.poster : null} big /></div>
+    <div class="poster-col"><Poster title={film.title} rank={film.manually_added ? null : film.latest_rank} src={ready ? meta.poster : null} big /></div>
 
     <div class="info">
       <h1>{displayTitle(film.title)}</h1>
@@ -489,7 +489,11 @@
       </div>
 
       <div class="chips">
-        <span class="chip rank">#{film.latest_rank} · TSPDT</span>
+        {#if film.manually_added}
+          <span class="chip rank manual"><Icon name="diamond" size={11} stroke={2.1} /> Added to Film Index</span>
+        {:else}
+          <span class="chip rank">#{film.latest_rank} · TSPDT</span>
+        {/if}
         {#each genres as g}<span class="chip">{g}</span>{/each}
         {#if runtime}<span class="chip">{runtime} min</span>{/if}
         {#if film.colour && film.colour !== '---'}<span class="chip">{colourLabel(film.colour)}</span>{/if}
@@ -780,10 +784,17 @@
     </section>
   {/if}
 
-  <section class="block">
-    <div class="section-h">Ranking history · {film.history.length} editions</div>
-    <Sparkline history={film.history} />
-  </section>
+  {#if film.manually_added}
+    <section class="block manual-origin">
+      <span><Icon name="diamond" size={16} stroke={2} /></span>
+      <div><b>Manually added</b><p>This film sits after the ranked catalogue. If it appears in a future TSPDT edition, its lists, playback and download history will merge into the official ranked entry automatically.</p></div>
+    </section>
+  {:else}
+    <section class="block">
+      <div class="section-h">Ranking history · {film.history.length} editions</div>
+      <Sparkline history={film.history} />
+    </section>
+  {/if}
 </article>
 
 <style>
@@ -813,6 +824,15 @@
   .chip { font-size: 12px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border);
     background: var(--surface-2); color: var(--muted); }
   .chip.rank { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+  .chip.rank.manual { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); color: var(--text);
+    border-color: var(--border-strong); letter-spacing: .02em; }
+  .chip.rank.manual :global(.icon) { color: var(--accent); }
+
+  .manual-origin { display: flex; align-items: flex-start; gap: 13px; }
+  .manual-origin > span { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 11px;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--accent); }
+  .manual-origin b { font-family: var(--font-display); font-size: 16px; }
+  .manual-origin p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 
   /* Age ratings: one representative badge + an expandable breakdown, instead of
      a wall of per-country pills. */

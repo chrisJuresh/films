@@ -9,6 +9,7 @@
   let status = $state(film.status ?? null);       // site status: watchlist|seen|rewatch|unfinished|null
   let lbState = $state(film.lb_state ?? null);    // letterboxd:  watched|unwatched|null
   let poster = $state(null);
+  let manuallyAdded = $derived(!!film.manually_added);
 
   let watchlisted = $derived(status === 'watchlist');
   let lbWatched = $derived(lbState === 'watched');
@@ -30,7 +31,7 @@
   // Pull real poster art (TMDB) for this card. Rendering is already bounded to
   // ~60 cards per page by the grid's infinite scroll, so a per-card fetch is fine.
   onMount(() => {
-    if (!postersEnabled || !film.imdb_id) return;
+    if (!postersEnabled || (!film.imdb_id && !manuallyAdded)) return;
     fetch(`/api/meta/${film.id_tspdt}?level=light`)
       .then((r) => r.json())
       .then((m) => { if (m?.poster) poster = m.poster; })
@@ -65,8 +66,12 @@
 
 <a class="card" href="/film/{film.id_tspdt}">
   <div class="pw">
-    <Poster title={film.title} rank={film.rank} src={poster} />
-    <span class="rank">#{film.rank}</span>
+    <Poster title={film.title} rank={manuallyAdded ? null : film.rank} src={poster} />
+    {#if manuallyAdded}
+      <span class="rank manual" title="Manually added to Film Index"><Icon name="diamond" size={10} stroke={2.1} /> ADDED</span>
+    {:else}
+      <span class="rank">#{film.rank}</span>
+    {/if}
     <div class="rtags">
       {#if film.is_new}<span class="badge new">NEW</span>{/if}
       {#if download === 'downloaded'}<span class="dtag done" title="Downloaded"><Icon name="hdd" size={12} stroke={2} /></span>
@@ -113,6 +118,11 @@
   .rank { position: absolute; top: 9px; left: 9px; z-index: 2; background: var(--accent);
     color: var(--accent-ink); font-weight: 700; font-size: 12.5px; padding: 3px 8px;
     border-radius: 7px; font-variant-numeric: tabular-nums; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+  .rank.manual { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px;
+    background: color-mix(in srgb, var(--surface-2) 88%, transparent); color: #f4efe4;
+    border: 1px solid rgba(255,255,255,.22); font-size: 9.5px; letter-spacing: .1em;
+    backdrop-filter: blur(7px); }
+  .rank.manual :global(.icon) { color: var(--accent); }
   /* Top-right stack: NEW badge, then the Radarr download-state indicator. */
   .rtags { position: absolute; top: 9px; right: 9px; z-index: 2; display: flex; flex-direction: column;
     align-items: flex-end; gap: 5px; }
