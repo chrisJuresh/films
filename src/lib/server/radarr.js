@@ -130,12 +130,17 @@ export function grabReleaseFor(guid, indexerId) {
 // parser can't handle). `imdbId`/`year` locate the movie for the qB path.
 export async function grabProwlarrRelease(imdbId, year, release) {
   const cfg = config();
+  let movieId = null;
   try {
+    // The release picker can remain open while the movie is removed from Radarr.
+    // Re-establish it immediately before release/push so Radarr has a library
+    // movie to associate the parsed title/year with.
+    movieId = await ensureMovie(imdbId, cfg);
     await pushRelease(release, cfg);
     return { grabbed: true, via: 'radarr' };
   } catch (e) {
     if (!qbEnabled()) throw e;
-    const movieId = await ensureMovie(imdbId, cfg);
+    movieId ||= await ensureMovie(imdbId, cfg);
     await grabToQb(release, movieId);
     return { grabbed: true, via: 'qbittorrent' };
   }
