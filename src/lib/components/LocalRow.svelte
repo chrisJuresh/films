@@ -50,7 +50,7 @@
 </script>
 
 <a class="row {kind}" href="/film/{id}">
-  <div class="thumb"><Poster title={film?.title ?? String(id)} rank={film?.rank} src={poster} /></div>
+  <div class="thumb"><Poster title={film?.title ?? String(id)} rank={film?.manually_added ? null : film?.rank} src={poster} /></div>
   <div class="mid">
     <div class="t">{title}</div>
     <div class="s">

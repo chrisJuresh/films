@@ -14,10 +14,10 @@ export async function GET({ params }) {
   const id = Number(params.id);
   const job = encodeJob(id);
   const out = {
-    hasFile: false, sourcePlayable: false, encoded: id > 0 ? encodedExists(id) : false,
+    hasFile: false, sourcePlayable: false, encoded: Number.isSafeInteger(id) && id !== 0 ? encodedExists(id) : false,
     browser: false, encode: job ? { state: job.state, percent: job.percent, error: job.error } : null
   };
-  const film = id > 0 ? getFilmBasic(id) : null;
+  const film = Number.isSafeInteger(id) && id !== 0 ? getFilmBasic(id) : null;
   if (film?.imdb_id) {
     try {
       const mf = await getMovieFileInfo(film.imdb_id);

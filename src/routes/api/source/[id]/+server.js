@@ -9,7 +9,7 @@ import { resolveSource, fileResponse, encodedFile, encodedExists } from '$lib/se
 // back to the encoded copy only if the original isn't reachable.
 export async function GET({ params, request }) {
   const id = Number(params.id);
-  if (!(id > 0)) throw error(400, 'A valid film id is required.');
+  if (!Number.isSafeInteger(id) || id === 0) throw error(400, 'A valid film id is required.');
   const film = getFilmBasic(id);
   if (film?.imdb_id) {
     try {

@@ -101,7 +101,37 @@ function getDb() {
       imported_at TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (cf_user, name, year)
     );
+    CREATE TABLE IF NOT EXISTS manual_films (
+      tmdb_id     INTEGER PRIMARY KEY,
+      id_tspdt    INTEGER NOT NULL UNIQUE,
+      imdb_id     TEXT,
+      title       TEXT NOT NULL,
+      year        TEXT,
+      added_by    TEXT,
+      added_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      merged_into INTEGER,
+      merged_at   TEXT
+    );
+    CREATE INDEX IF NOT EXISTS manual_films_active ON manual_films(id_tspdt) WHERE merged_into IS NULL;
+    CREATE INDEX IF NOT EXISTS manual_films_imdb ON manual_films(imdb_id) WHERE imdb_id IS NOT NULL;
   `);
+  // Manual additions store their TMDB identity on the film row as well as in
+  // manual_films. The latter is the durable audit trail; the former keeps
+  // duplicate checks and integrations cheap. Existing databases gain it here.
+  const filmCols = new Set(db.prepare('PRAGMA table_info(films)').all().map((c) => c.name));
+  if (!filmCols.has('tmdb_id')) db.exec('ALTER TABLE films ADD COLUMN tmdb_id INTEGER');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_films_tmdb ON films(tmdb_id) WHERE tmdb_id IS NOT NULL');
+  // Backfill TMDB ids already learned by the enrichment cache. JSON1 ships
+  // with the Node SQLite build, but keep startup tolerant of an unusual build.
+  try {
+    db.exec(`UPDATE films SET tmdb_id=CAST(json_extract(
+      (SELECT json FROM film_meta WHERE film_meta.id_tspdt=films.id_tspdt), '$.tmdb_id'
+    ) AS INTEGER)
+    WHERE tmdb_id IS NULL AND EXISTS (
+      SELECT 1 FROM film_meta WHERE film_meta.id_tspdt=films.id_tspdt
+        AND json_valid(film_meta.json) AND json_extract(film_meta.json, '$.tmdb_id') IS NOT NULL
+    )`);
+  } catch { /* JSON1 unavailable: duplicate checks still fall back to IMDb. */ }
   // Migration for DBs created before film_download had a progress column.
   try { db.exec('ALTER TABLE film_download ADD COLUMN progress INTEGER'); } catch { /* already present */ }
   // Migration: older DBs created user_status with CHECK IN ('watchlist','seen').
@@ -157,7 +187,10 @@ export function getFacets() {
   if (_facets) return _facets;
   const db = getDb();
   const rows = db.prepare(
-    'SELECT country, genre, colour, year FROM films WHERE removed_at IS NULL AND latest_rank IS NOT NULL'
+    `SELECT f.country, f.genre, f.colour, f.year
+     FROM films f
+     LEFT JOIN manual_films mf ON mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
+     WHERE f.removed_at IS NULL AND (f.latest_rank IS NOT NULL OR mf.id_tspdt IS NOT NULL)`
   ).all();
   const countries = new Map(), genres = new Map(), colours = new Map(), decades = new Map();
   const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
@@ -169,21 +202,24 @@ export function getFacets() {
   }
   const top = (m, n) => [...m.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(b[0]))
     .slice(0, n).map(([value, count]) => ({ value, count }));
-  const total = db.prepare('SELECT count(*) c FROM films WHERE removed_at IS NULL AND latest_rank IS NOT NULL').get().c;
+  const catalogue = `f.removed_at IS NULL AND (f.latest_rank IS NOT NULL OR EXISTS (
+    SELECT 1 FROM manual_films mf WHERE mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
+  ))`;
+  const total = db.prepare(`SELECT count(*) c FROM films f WHERE ${catalogue}`).get().c;
   const latest = db.prepare('SELECT label, poll_year FROM editions ORDER BY poll_date DESC, edition_id DESC LIMIT 1').get();
   // Age ratings: distinct certifications across all countries (film_cert is
   // backfilled + kept fresh on enrichment). Mixed systems (R / 15 / 18 / U …).
   const certifications = db.prepare(
     `SELECT fc.cert AS value, count(DISTINCT fc.id_tspdt) AS count
      FROM film_cert fc JOIN films f USING(id_tspdt)
-     WHERE f.removed_at IS NULL AND f.latest_rank IS NOT NULL
+     WHERE ${catalogue}
      GROUP BY fc.cert ORDER BY count DESC, value LIMIT 80`
   ).all();
   // Age-rating distribution (min admittance age -> film count) for the slider.
   const ages = db.prepare(
     `SELECT fa.min_age AS age, count(*) AS count
      FROM film_age fa JOIN films f USING(id_tspdt)
-     WHERE f.removed_at IS NULL AND f.latest_rank IS NOT NULL
+     WHERE ${catalogue}
      GROUP BY fa.min_age ORDER BY fa.min_age`
   ).all();
   _facets = {
@@ -211,7 +247,7 @@ const LIKE = "LIKE ? ESCAPE '\\'";
 export function queryFilms(p = {}) {
   const db = getDb();
   const user = p.user ?? 'local';                                  // per-user watchlist/seen (Cloudflare identity)
-  const where = ['f.removed_at IS NULL', 'f.latest_rank IS NOT NULL'];
+  const where = ['f.removed_at IS NULL', '(f.latest_rank IS NOT NULL OR mf.id_tspdt IS NOT NULL)'];
   const args = [];
   if (p.q) { where.push(`(f.title ${LIKE} OR f.director ${LIKE})`); args.push(`%${likeEsc(p.q)}%`, `%${likeEsc(p.q)}%`); }
 
@@ -248,7 +284,8 @@ export function queryFilms(p = {}) {
 
   // Per-user joins: site status (us) + Letterboxd watched state (lb) for THIS user.
   // film_download (fd) is global (Radarr's view), not per-user.
-  const joins = `LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
+  const joins = `LEFT JOIN manual_films mf ON mf.id_tspdt = f.id_tspdt AND mf.merged_into IS NULL
+     LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
      LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
      LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt
      LEFT JOIN playback pb ON pb.id_tspdt = f.id_tspdt AND pb.cf_user = ?`;
@@ -264,19 +301,33 @@ export function queryFilms(p = {}) {
   const limit = Math.trunc(Math.max(1, Math.min(120, +p.limit || 60)));   // integer for LIMIT/OFFSET
   const offset = Math.max(0, Math.trunc(+p.offset || 0));
   const wc = where.join(' AND ');
+  // Manual additions are deliberately a coda to the ranked catalogue for every
+  // sort mode. Within that coda, the selected sort still applies, with added_at
+  // providing a deterministic final order for infinite-scroll offsets.
+  const manualLast = 'CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END ASC';
 
   // The joins' `?` (user, user) bind before the WHERE args; LIMIT/OFFSET bind last.
   const total = db.prepare(`SELECT count(*) c FROM films f ${joins} WHERE ${wc}`).get(...joinArgs, ...args).c;
   const items = db.prepare(
     `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, f.country,
-            f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.is_new,
+            f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.tmdb_id, f.is_new,
+            CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END AS manually_added,
             us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress,
             pb.position AS pb_position, pb.duration AS pb_duration
      FROM films f ${joins} WHERE ${wc}
-     ORDER BY ${sort} ${order}, f.latest_rank ASC
+     ORDER BY ${manualLast}, ${sort} ${order}, f.latest_rank ASC, mf.added_at ASC, f.id_tspdt ASC
      LIMIT ? OFFSET ?`
   ).all(...joinArgs, ...args, limit, offset);
   return { total, items };
+}
+
+function resolveFilmId(db, id) {
+  const n = Number(id);
+  if (!Number.isSafeInteger(n)) return null;
+  if (db.prepare('SELECT 1 FROM films WHERE id_tspdt=?').get(n)) return n;
+  return db.prepare(
+    'SELECT merged_into FROM manual_films WHERE id_tspdt=? AND merged_into IS NOT NULL'
+  ).get(n)?.merged_into ?? null;
 }
 
 // Basic rows for a set of ids (order not guaranteed). Used by the download
@@ -285,39 +336,164 @@ export function queryFilms(p = {}) {
 export function filmsByIds(ids) {
   const arr = [...new Set((ids || []).map(Number).filter(Number.isInteger))].slice(0, 300);
   if (!arr.length) return [];
-  const ph = arr.map(() => '?').join(',');
-  return getDb().prepare(
-    `SELECT id_tspdt, latest_rank AS rank, title, year, director, imdb_id
-     FROM films WHERE id_tspdt IN (${ph})`
-  ).all(...arr);
+  const db = getDb();
+  const get = db.prepare(
+    `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, f.imdb_id,
+            CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END AS manually_added
+     FROM films f
+     LEFT JOIN manual_films mf ON mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
+     WHERE f.id_tspdt=?`
+  );
+  const rows = [];
+  for (const requested of arr) {
+    const actual = resolveFilmId(db, requested);
+    const row = actual == null ? null : get.get(actual);
+    // Desktop downloads keep the id used when the file was saved. Returning
+    // that requested id preserves the local-file lookup after reconciliation;
+    // /film/:id and /api/meta/:id resolve the durable alias transparently.
+    if (row) rows.push({ ...row, id_tspdt: requested, canonical_id: actual });
+  }
+  return rows;
 }
 
 export function getFilmBasic(id) {
-  return getDb().prepare(
-    'SELECT id_tspdt, imdb_id, imdb_url, title, year FROM films WHERE id_tspdt = ?'
-  ).get(id) || null;
+  const db = getDb();
+  const actual = resolveFilmId(db, id);
+  if (actual == null) return null;
+  return db.prepare(
+    'SELECT id_tspdt, imdb_id, imdb_url, tmdb_id, title, year FROM films WHERE id_tspdt = ?'
+  ).get(actual) || null;
 }
 
 export function getFilm(id, user = 'local') {
   const db = getDb();
+  const actual = resolveFilmId(db, id);
+  if (actual == null) return null;
   const row = db.prepare(
-    `SELECT f.*, us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress
+    `SELECT f.*, us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress,
+            CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END AS manually_added,
+            mf.added_at AS manually_added_at
      FROM films f
+     LEFT JOIN manual_films mf ON mf.id_tspdt = f.id_tspdt AND mf.merged_into IS NULL
      LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
      LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
      LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt
      WHERE f.id_tspdt = ?`
-  ).get(user, user, id);
+  ).get(user, user, actual);
   if (!row) return null;
   delete row.content_hash;
   row.history = db.prepare(
     `SELECT e.label, e.poll_year, r.position FROM rankings r
      JOIN editions e USING(edition_id) WHERE r.id_tspdt = ?
      ORDER BY e.poll_date ASC, e.edition_id ASC`
-  ).all(id);
-  row.certs = db.prepare('SELECT country, cert FROM film_cert WHERE id_tspdt = ? ORDER BY country, cert').all(id);
-  row.playback = db.prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, id) || null;
+  ).all(actual);
+  row.certs = db.prepare('SELECT country, cert FROM film_cert WHERE id_tspdt = ? ORDER BY country, cert').all(actual);
+  row.playback = db.prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, actual) || null;
   return row;
+}
+
+/* --------------------------------------------------- manual additions ---- */
+function existingFilm(db, tmdbId, imdbId = null) {
+  // manual_films survives reconciliation, so a TMDB result remains recognised
+  // after its temporary negative id has been merged into a real TSPDT id.
+  const tracked = db.prepare(
+    `SELECT COALESCE(merged_into, id_tspdt) AS id_tspdt
+     FROM manual_films WHERE tmdb_id=?`
+  ).get(tmdbId);
+  if (tracked && db.prepare('SELECT 1 FROM films WHERE id_tspdt=?').get(tracked.id_tspdt)) return tracked.id_tspdt;
+
+  const clauses = ['f.tmdb_id=?'];
+  const args = [tmdbId];
+  if (imdbId) { clauses.push('f.imdb_id=?'); args.push(imdbId); }
+  return db.prepare(
+    `SELECT f.id_tspdt
+     FROM films f
+     LEFT JOIN manual_films mf ON mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
+     WHERE f.removed_at IS NULL AND (f.latest_rank IS NOT NULL OR mf.id_tspdt IS NOT NULL)
+       AND (${clauses.join(' OR ')})
+     ORDER BY (f.latest_rank IS NULL), f.latest_rank
+     LIMIT 1`
+  ).get(...args)?.id_tspdt ?? null;
+}
+
+// Resolve search results to catalogue ids in one bounded query. Returned keys
+// are TMDB ids and values are the film routes the UI should treat as existing.
+export function existingFilmsByTmdb(tmdbIds) {
+  const ids = [...new Set((tmdbIds || []).map(Number).filter((n) => Number.isSafeInteger(n) && n > 0))].slice(0, 20);
+  if (!ids.length) return {};
+  const db = getDb();
+  const out = {};
+  for (const id of ids) {
+    const filmId = existingFilm(db, id);
+    if (filmId != null) out[id] = filmId;
+  }
+  return out;
+}
+
+// `record` is the normalised result of a TMDB details lookup. The negative id
+// namespace cannot collide with TSPDT's positive natural ids, while tmdb_id is
+// the stable external identity used for deduplication and future reconciliation.
+export function addManualFilm(user, record) {
+  const db = getDb();
+  const tmdbId = Number(record?.tmdbId);
+  if (!Number.isSafeInteger(tmdbId) || tmdbId <= 0) throw new TypeError('A valid TMDB id is required.');
+  const imdbId = /^tt\d+$/.test(record?.film?.imdb_id || '') ? record.film.imdb_id : null;
+  const already = existingFilm(db, tmdbId, imdbId);
+  if (already != null) return { id: already, created: false };
+
+  const id = -tmdbId;
+  const film = record.film || {};
+  const now = new Date().toISOString();
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const raced = existingFilm(db, tmdbId, imdbId);
+    if (raced != null) { db.exec('COMMIT'); return { id: raced, created: false }; }
+    if (db.prepare('SELECT 1 FROM films WHERE id_tspdt=?').get(id)) {
+      throw new Error('The manual film id is already in use.');
+    }
+    db.prepare(
+      `INSERT INTO films (
+         id_tspdt, imdb_id, imdb_url, tmdb_id, is_new, director, title, year, country,
+         length_min, colour, genre, latest_rank, latest_edition_id, content_hash,
+         first_seen, last_seen, removed_at
+       ) VALUES (?,?,?,?,0,?,?,?,?,?,?,?,NULL,NULL,?,?,?,NULL)`
+    ).run(
+      id, imdbId, film.imdb_url || null, tmdbId, film.director || null,
+      film.title, film.year || null, film.country || null, film.length_min || null,
+      film.colour || null, film.genre || null, `manual:tmdb:${tmdbId}`, now, now
+    );
+    db.prepare(
+      `INSERT INTO manual_films(tmdb_id,id_tspdt,imdb_id,title,year,added_by,added_at)
+       VALUES(?,?,?,?,?,?,?)
+       ON CONFLICT(tmdb_id) DO UPDATE SET
+         id_tspdt=excluded.id_tspdt, imdb_id=excluded.imdb_id, title=excluded.title,
+         year=excluded.year, added_by=excluded.added_by, added_at=excluded.added_at,
+         merged_into=NULL, merged_at=NULL`
+    ).run(tmdbId, id, imdbId, film.title, film.year || null, user || 'local', now);
+
+    const meta = { ...(record.meta || {}), id_tspdt: id, tmdb_id: tmdbId };
+    if (meta.poster_src) meta.poster = `/img/poster/${id}`;
+    if (meta.backdrop_src) meta.backdrop = `/img/backdrop/${id}`;
+    db.prepare('INSERT INTO film_meta(id_tspdt,level,json,fetched_at) VALUES(?,?,?,datetime(\'now\'))')
+      .run(id, 'full', JSON.stringify(meta));
+
+    const certs = [];
+    const insCert = db.prepare('INSERT OR IGNORE INTO film_cert(id_tspdt,country,cert) VALUES(?,?,?)');
+    for (const c of record.certs || []) {
+      const country = String(c?.country || '').trim();
+      const cert = String(c?.cert || '').trim();
+      if (cert) { insCert.run(id, country, cert); certs.push({ country, cert }); }
+    }
+    const age = filmMinAge(certs);
+    if (age != null) db.prepare('INSERT INTO film_age(id_tspdt,min_age) VALUES(?,?)').run(id, age);
+    db.exec('COMMIT');
+  } catch (e) {
+    db.exec('ROLLBACK');
+    throw e;
+  }
+  _facets = null;
+  _titleIndex = null;
+  return { id, created: true };
 }
 
 /* -------------------------------------------------------------- status ---- */
@@ -325,6 +501,7 @@ export function getFilm(id, user = 'local') {
 // "watched" is tracked SEPARATELY in lb_seen, so a film is SEEN if it's
 // site-seen OR lb_seen='watched'.
 function statusFor(db, user, id) {
+  id = resolveFilmId(db, id) ?? id;
   const site = db.prepare('SELECT status FROM user_status WHERE cf_user=? AND id_tspdt=?').get(user, id)?.status ?? null;
   const lb_state = db.prepare('SELECT state FROM lb_seen WHERE cf_user=? AND id_tspdt=?').get(user, id)?.state ?? null;
   return {
@@ -344,6 +521,7 @@ function statusFor(db, user, id) {
 const SITE_STATUSES = new Set(['watchlist', 'seen', 'rewatch', 'unfinished']);
 export function setStatus(user, id, kind, on) {
   const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
   if (!SITE_STATUSES.has(kind)) return statusFor(db, user, id);
   if (on) {
     db.prepare(
@@ -381,27 +559,40 @@ export function counts(user = 'local') {
 
 /* ------------------------------------------------- enrichment cache ------ */
 export function getMetaCache(id) {
-  return getDb().prepare('SELECT json, level, fetched_at FROM film_meta WHERE id_tspdt = ?').get(id) || null;
+  const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
+  return db.prepare('SELECT json, level, fetched_at FROM film_meta WHERE id_tspdt = ?').get(id) || null;
 }
 export function setMetaCache(id, obj, level) {
-  getDb().prepare(
+  const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
+  db.prepare(
     `INSERT INTO film_meta(id_tspdt, level, json, fetched_at) VALUES(?,?,?,datetime('now'))
      ON CONFLICT(id_tspdt) DO UPDATE SET level=excluded.level, json=excluded.json, fetched_at=excluded.fetched_at`
   ).run(id, level, JSON.stringify(obj));
+  if (Number.isSafeInteger(obj?.tmdb_id) && obj.tmdb_id > 0) {
+    db.prepare('UPDATE films SET tmdb_id=COALESCE(tmdb_id,?) WHERE id_tspdt=?').run(obj.tmdb_id, id);
+  }
 }
 
 /* -------------------------------------------------- playback position ---- */
 export function setPlayback(user, id, position, duration) {
-  getDb().prepare(
+  const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
+  db.prepare(
     `INSERT INTO playback(cf_user, id_tspdt, position, duration, updated_at) VALUES(?,?,?,?,datetime('now'))
      ON CONFLICT(cf_user, id_tspdt) DO UPDATE SET position=excluded.position, duration=excluded.duration, updated_at=excluded.updated_at`
   ).run(user, id, position, duration ?? null);
 }
 export function getPlayback(user, id) {
-  return getDb().prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, id) || null;
+  const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
+  return db.prepare('SELECT position, duration FROM playback WHERE cf_user=? AND id_tspdt=?').get(user, id) || null;
 }
 export function clearPlayback(user, id) {
-  getDb().prepare('DELETE FROM playback WHERE cf_user=? AND id_tspdt=?').run(user, id);
+  const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
+  db.prepare('DELETE FROM playback WHERE cf_user=? AND id_tspdt=?').run(user, id);
 }
 
 /* ---------------------------------------------- Radarr download state ---- */
@@ -409,7 +600,12 @@ export function clearPlayback(user, id) {
 // download state. stateByImdb: iterable of [imdbId, { state, progress }].
 export function syncFilmDownloads(stateByImdb) {
   const db = getDb();
-  const sel = db.prepare('SELECT id_tspdt FROM films WHERE imdb_id = ?');
+  const sel = db.prepare(
+    `SELECT f.id_tspdt FROM films f
+     LEFT JOIN manual_films mf ON mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
+     WHERE f.imdb_id=? AND f.removed_at IS NULL AND (f.latest_rank IS NOT NULL OR mf.id_tspdt IS NOT NULL)
+     ORDER BY (f.latest_rank IS NULL), f.latest_rank LIMIT 1`
+  );
   const rows = [];
   for (const [imdb, v] of stateByImdb) {
     const r = imdb && sel.get(imdb);
@@ -434,6 +630,7 @@ export function downloadCounts() {
 // Replace all stored certifications for a film. certs = [{ country, cert }].
 export function setFilmCerts(id, certs) {
   const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
   db.prepare('DELETE FROM film_cert WHERE id_tspdt = ?').run(id);
   const ins = db.prepare('INSERT OR IGNORE INTO film_cert(id_tspdt, country, cert) VALUES(?,?,?)');
   const clean = [];
@@ -459,7 +656,11 @@ let _titleIndex = null;
 function titleIndex(db) {
   if (_titleIndex) return _titleIndex;
   const m = new Map();
-  for (const r of db.prepare("SELECT id_tspdt, title, year FROM films WHERE removed_at IS NULL AND latest_rank IS NOT NULL").all()) {
+  for (const r of db.prepare(
+    `SELECT f.id_tspdt, f.title, f.year FROM films f
+     LEFT JOIN manual_films mf ON mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
+     WHERE f.removed_at IS NULL AND (f.latest_rank IS NOT NULL OR mf.id_tspdt IS NOT NULL)`
+  ).all()) {
     const k = canon(r.title);
     if (!k) continue;
     if (!m.has(k)) m.set(k, []);
@@ -518,17 +719,21 @@ export function importLetterboxd(user, rows) {
 export function reconciliation(user) {
   const db = getDb();
   const onlySite = db.prepare(
-    `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director
+    `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director,
+            CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END AS manually_added
      FROM user_status us JOIN films f USING(id_tspdt)
+     LEFT JOIN manual_films mf ON mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
      LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
      WHERE us.cf_user = ? AND us.status = 'seen' AND lb.id_tspdt IS NULL
-     ORDER BY f.latest_rank`
+     ORDER BY (mf.id_tspdt IS NOT NULL), f.latest_rank, mf.added_at`
   ).all(user, user);
   const lbRemoved = db.prepare(
-    `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, lb.lb_date
+    `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, lb.lb_date,
+            CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END AS manually_added
      FROM lb_seen lb JOIN films f USING(id_tspdt)
+     LEFT JOIN manual_films mf ON mf.id_tspdt=f.id_tspdt AND mf.merged_into IS NULL
      WHERE lb.cf_user = ? AND lb.state = 'unwatched'
-     ORDER BY f.latest_rank`
+     ORDER BY (mf.id_tspdt IS NOT NULL), f.latest_rank, mf.added_at`
   ).all(user);
   const unmatched = db.prepare(
     `SELECT name, year, lb_date FROM lb_unmatched WHERE cf_user = ? ORDER BY name COLLATE NOCASE`

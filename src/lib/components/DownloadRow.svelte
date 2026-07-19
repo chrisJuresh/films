@@ -39,10 +39,10 @@
 </script>
 
 <a class="row {kind}" href="/film/{film.id_tspdt}">
-  <div class="thumb"><Poster title={film.title} rank={film.rank} src={poster} /></div>
+  <div class="thumb"><Poster title={film.title} rank={film.manually_added ? null : film.rank} src={poster} /></div>
   <div class="mid">
     <div class="t">{displayTitle(film.title)}</div>
-    <div class="s">#{film.rank}{film.year ? ' · ' + film.year : ''}{film.director ? ' · ' + film.director : ''}</div>
+    <div class="s">{film.manually_added ? 'Added to Film Index' : '#' + film.rank}{film.year ? ' · ' + film.year : ''}{film.director ? ' · ' + film.director : ''}</div>
     {#if kind === 'downloading'}
       <div class="bar" class:indet={pct == null}><span style={pct == null ? undefined : `width:${pct}%`}></span></div>
     {/if}

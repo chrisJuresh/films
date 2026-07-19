@@ -7,7 +7,7 @@ import { getReleases, grabReleaseFor, grabProwlarrRelease, RadarrError } from '$
 // (source: 'prowlarr') pushed into Radarr so it still imports.
 export async function GET({ params }) {
   const id = Number(params.id);
-  const film = id > 0 ? getFilmBasic(id) : null;
+  const film = Number.isSafeInteger(id) && id !== 0 ? getFilmBasic(id) : null;
   if (!film?.imdb_id) throw error(404, 'Film not found.');
   try {
     return json(await getReleases(film.imdb_id, film.year));
@@ -21,7 +21,7 @@ export async function POST({ params, request }) {
   try {
     if (body.source === 'prowlarr') {
       const id = Number(params.id);
-      const film = id > 0 ? getFilmBasic(id) : null;
+      const film = Number.isSafeInteger(id) && id !== 0 ? getFilmBasic(id) : null;
       if (!film?.imdb_id) throw error(404, 'Film not found.');
       return json(await grabProwlarrRelease(film.imdb_id, film.year, body));
     }

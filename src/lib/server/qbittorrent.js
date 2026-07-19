@@ -57,7 +57,10 @@ export async function grabToQb(release, movieId) {
     else await qb.addTorrent(cfg, { url: src.url, category: CATEGORY, tags }, c, fetch);
   };
   try { await run(); } catch { _cookie = null; await run(); }   // one retry after re-login
-  startPump();
+  // qB 5 may acknowledge an upload before the torrent appears in torrents/info.
+  // Keep polling briefly even if the first list is empty, otherwise the pump can
+  // stop in that small window and never wake when the download completes.
+  startPump(90000);
   return { added: true };
 }
 
@@ -117,9 +120,10 @@ export async function exportTorrent(hash) {
 let _importFn = null;
 export function setImporter(fn) { _importFn = fn; }
 
-let pumpTimer = null, pumping = false;
-export function startPump() {
+let pumpTimer = null, pumping = false, pumpGraceUntil = 0;
+export function startPump(graceMs = 0) {
   if (!config() || !_importFn) return;
+  pumpGraceUntil = Math.max(pumpGraceUntil, Date.now() + Math.max(0, Number(graceMs) || 0));
   if (!pumpTimer) pumpTimer = setInterval(runPump, 30000);
   runPump();
 }
@@ -141,8 +145,14 @@ async function runPump() {
       try {
         await _importFn(movieId, t.content_path);
         await qb.setTags(cfg, t.hash, IMPORT_TAG, false, c, fetch);   // imported → stop tracking
-      } catch { pending++; }                                          // still moving / transient → retry
+      } catch (cause) {
+        pending++;
+        console.error(`qBittorrent import failed for movie ${movieId}; retrying:`, cause);
+      }
     }
-    if (!pending && pumpTimer) { clearInterval(pumpTimer); pumpTimer = null; }
+    if (!pending && Date.now() >= pumpGraceUntil && pumpTimer) {
+      clearInterval(pumpTimer);
+      pumpTimer = null;
+    }
   } finally { pumping = false; }
 }

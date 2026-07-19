@@ -8,7 +8,7 @@ import { streamTranscode } from '$lib/server/transcode.js';
 // playable source (both seekable via Range), otherwise transcodes on the fly.
 export async function GET({ params, request }) {
   const id = Number(params.id);
-  if (!(id > 0)) throw error(400, 'A valid film id is required.');
+  if (!Number.isSafeInteger(id) || id === 0) throw error(400, 'A valid film id is required.');
   const range = request.headers.get('range');
 
   if (encodedExists(id)) return fileResponse(encodedFile(id), range, {});

@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import FilmCard from '$lib/components/FilmCard.svelte';
+  import AddFilmDialog from '$lib/components/AddFilmDialog.svelte';
+  import Icon from '$lib/components/Icon.svelte';
   import { toast } from '$lib/stores.js';
 
   let { data } = $props();
@@ -9,6 +11,7 @@
   let items = $state(data.films);
   let total = $state(data.total);
   let loading = $state(false);
+  let addOpen = $state(false);
   let sentinel;
 
   $effect(() => { items = data.films; total = data.total; });
@@ -68,16 +71,23 @@
 
 <div class="results-bar">
   <div class="rb-count">{total.toLocaleString()} <span>titles</span></div>
-  <label class="rb-sort">
-    Sort
-    <select class="ctl" onchange={onSort} value={sortValue()}>
-      <option value="rank|asc">Ranking (best first)</option>
-      <option value="rank|desc">Ranking (lowest first)</option>
-      <option value="year|desc">Year (newest)</option>
-      <option value="year|asc">Year (oldest)</option>
-      <option value="title|asc">Title (A–Z)</option>
-    </select>
-  </label>
+  <div class="rb-tools">
+    {#if data.meta?.tmdb}
+      <button class="rb-add" onclick={() => (addOpen = true)} title="Add a movie outside the TSPDT list">
+        <Icon name="plus" size={15} stroke={2.2} /><span>Add film</span>
+      </button>
+    {/if}
+    <label class="rb-sort">
+      <span>Sort</span>
+      <select class="ctl" onchange={onSort} value={sortValue()}>
+        <option value="rank|asc">Ranking (best first)</option>
+        <option value="rank|desc">Ranking (lowest first)</option>
+        <option value="year|desc">Year (newest)</option>
+        <option value="year|asc">Year (oldest)</option>
+        <option value="title|asc">Title (A–Z)</option>
+      </select>
+    </label>
+  </div>
 </div>
 
 <main class="grid-wrap">
@@ -94,6 +104,8 @@
   {#if loading}<div class="loading"><span></span><span></span><span></span></div>{/if}
 </main>
 
+<AddFilmDialog open={addOpen} onclose={() => (addOpen = false)} />
+
 <style>
   .results-bar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center;
     justify-content: space-between; gap: 16px; padding: 18px 30px;
@@ -101,6 +113,12 @@
     border-bottom: 1px solid var(--border); }
   .rb-count { font-family: var(--font-display); font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .rb-count span { color: var(--muted); font-size: 14px; font-family: var(--font-sans); font-weight: 400; }
+  .rb-tools { display: flex; align-items: center; gap: 12px; }
+  .rb-add { display: inline-flex; align-items: center; gap: 7px; padding: 8px 13px; border-radius: 9px;
+    border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); font-size: 13px;
+    font-weight: 700; cursor: pointer; box-shadow: 0 5px 18px color-mix(in srgb, var(--accent) 13%, transparent);
+    transition: filter .14s, transform .14s; }
+  .rb-add:hover { filter: brightness(1.07); transform: translateY(-1px); }
   .rb-sort { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
 
   .grid-wrap { padding: 26px 30px 60px; }
@@ -118,6 +136,9 @@
        two don't fight over the top edge. */
     .results-bar { position: static; padding: 13px 16px; }
     .rb-count { font-size: 19px; }
+    .rb-tools { gap: 8px; min-width: 0; }
+    .rb-add { width: 38px; height: 38px; padding: 0; justify-content: center; flex: none; }
+    .rb-add span, .rb-sort > span { display: none; }
     .rb-sort .ctl { font-size: 16px; }   /* 16px: no iOS focus-zoom */
     .grid-wrap { padding: 16px 14px 56px; }
     .grid { gap: 18px 12px; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); }
