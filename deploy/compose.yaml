@@ -46,7 +46,7 @@ services:
       # Optional qBittorrent-direct fallback. Some film titles defeat Radarr's
       # parser (e.g. "…1080 Bruxelles…"), so Radarr can't match/grab any release.
       # When set, those go straight to qB and are force-imported into Radarr by
-      # movie id once complete. qB and Radarr share the /mnt/bay3 -> /data mount,
+      # movie id once complete. qB and Radarr share the /mnt/bay6 -> /data mount,
       # so the finished path is importable as-is.
       - QBITTORRENT_URL=${QBITTORRENT_URL:-http://qbittorrent:8081}
       - QBITTORRENT_USER=${QBITTORRENT_USER:-}
@@ -64,7 +64,7 @@ services:
       # the right bay); RADARR_MEDIA_PREFIX is the Radarr side stripped first.
       - VAAPI_DEVICE=/dev/dri/renderD128
       - ENCODE_DIR=/data/encoded
-      - MEDIA_ROOTS=${FILMS_MEDIA_ROOTS:-/mnt/bay3/media}
+      - MEDIA_ROOTS=${FILMS_MEDIA_ROOTS:-/mnt/bay6/media}
       - RADARR_MEDIA_PREFIX=${FILMS_RADARR_MEDIA_PREFIX:-/data/media}
     devices:
       - /dev/dri/renderD128:/dev/dri/renderD128   # Intel iGPU (UHD 770) for VAAPI
@@ -73,10 +73,10 @@ services:
     volumes:
       - /srv/films:/data          # tspdt.db (+ -wal/-shm), .postercache, encoded/
       # Movie library, read-only, at the same host path Radarr uses so Radarr's
-      # file paths resolve. Radarr mounts /mnt/bay3 -> /data, so its files live
-      # under /mnt/bay3/media (RADARR_MEDIA_PREFIX=/data/media strips the Radarr
+      # file paths resolve. Radarr mounts /mnt/bay6 -> /data, so its files live
+      # under /mnt/bay6/media (RADARR_MEDIA_PREFIX=/data/media strips the Radarr
       # side). Adjust both this mount and MEDIA_ROOTS if your layout differs.
-      - /mnt/bay3/media:/mnt/bay3/media:ro
+      - /mnt/bay6/media:/mnt/bay6/media:ro
     ports:
       - "127.0.0.1:8100:3000"     # local health checks only (not the tunnel path)
     labels:
@@ -85,6 +85,49 @@ services:
       a3server:
         aliases: [films]          # tunnel ingress target: http://films:3000
       a3-arr:                     # private Radarr API: http://radarr:7878
+
+  # The public demo (demo.films.chrisj.uk). Same image, same catalogue, but with
+  # DEMO_MODE=1 it has no login, no Radarr/qBittorrent/ffmpeg and no media — see
+  # src/lib/server/demo.js for exactly what that turns off and why.
+  #
+  # Deliberately spartan next to the service above: no a3-arr network, no iGPU
+  # device, no media mount, no Radarr credentials. The demo cannot reach the
+  # media stack because it is not attached to it, not merely because its buttons
+  # are hidden.
+  #
+  # Its database is a SCRUBBED COPY (deploy/demo-db.mjs) on its own bind mount,
+  # so visitor lists never touch the private instance's data — in either
+  # direction. Re-seed it whenever the catalogue is re-synced.
+  films-demo:
+    container_name: films-demo
+    image: ghcr.io/chrisjuresh/films:latest
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    user: "1001:1001"
+    environment:
+      # Canonical public URL. Cloudflare's free certificate covers *.chrisj.uk
+      # but not a third-level name, so the tunnel serves this at
+      # films-demo.chrisj.uk and Vercel fronts demo.films.chrisj.uk with its own
+      # certificate. ORIGIN is the name visitors actually use.
+      - ORIGIN=https://demo.films.chrisj.uk
+      - DEMO_MODE=1
+      - TSPDT_DB=/data/tspdt.db
+      - TSPDT_IMG_DIR=/data/.postercache
+      # Posters, cast, trailers and the JustWatch availability that replaces the
+      # Watch button. Without a key the demo still runs, on typographic posters.
+      - TSPDT_TMDB_KEY=${TSPDT_TMDB_KEY:-}
+      - TSPDT_OMDB_KEY=${TSPDT_OMDB_KEY:-}
+    volumes:
+      - /srv/films-demo:/data   # scrubbed tspdt.db + its own poster cache
+    ports:
+      - "127.0.0.1:8101:3000"   # local health checks only (not the tunnel path)
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      a3server:
+        aliases: [films-demo]   # tunnel ingress target: http://films-demo:3000
 
 # The single Watchtower + cloudflared tunnel live in the `infra` project now.
 networks:
