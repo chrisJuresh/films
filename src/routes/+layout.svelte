@@ -128,7 +128,7 @@
   <button class="mb-burger" onclick={() => (menuOpen = true)} aria-label="Open filters and menu" aria-expanded={menuOpen}>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
   </button>
-  <a class="mb-home" href="/" aria-label="Home"><Icon name="diamond" size={15} /></a>
+  <a class="mb-home" href="/" aria-label="Home"><Icon name="film" size={18} /></a>
   <div class="mb-search search">
     <svg viewBox="0 0 24 24" class="search-ico" aria-hidden="true"><path d="M21 21l-4.3-4.3M11 19a8 8 0 1 1 0-16 8 8 0 0 1 0 16z"/></svg>
     <input type="search" placeholder="Search title or director" value={q} oninput={onSearch}
@@ -143,7 +143,7 @@
   <aside class="sidebar" class:open={menuOpen}>
     <button class="drawer-close" onclick={closeMenu} aria-label="Close menu"><Icon name="x" size={16} /></button>
     <a class="brand" href="/">
-      <span class="brand-mark"><Icon name="diamond" size={15} /></span><span class="brand-word">FILM&nbsp;INDEX</span>
+      <span class="brand-mark"><Icon name="film" size={16} /></span><span class="brand-word">FILM&nbsp;INDEX</span>
     </a>
 
     <div class="search">

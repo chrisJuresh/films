@@ -67,10 +67,14 @@ input, button, select { font-family: inherit; }
 }
 .content { flex: 1; min-width: 0; }
 
-.brand { display: flex; align-items: center; gap: 9px; text-decoration: none; color: inherit; padding: 2px; }
-/* Hug the icon (no inherited line box) so flex centring lines it up with the
-   wordmark's caps rather than with an oversized inherited line box. */
-.brand-mark { color: var(--accent); display: flex; align-items: center; }
+.brand { display: flex; align-items: baseline; gap: 9px; text-decoration: none; color: inherit; padding: 2px; }
+/* Register the mark on the wordmark's caps: the film-strip glyph fills 176/256
+   of its box (inset 40/256 top and bottom), so a box of cap x 256/176 draws it
+   at exactly cap height, and dropping it by that inset sits its bottom on the
+   baseline. The em pair is the fallback where `cap` is unsupported (cap ~ .72em). */
+.brand-mark { color: var(--accent); display: flex; font-size: 15px; }
+.brand-mark svg { width: 1.05em; height: 1.05em; transform: translateY(.164em); }
+.brand-mark svg { width: 1.4545cap; height: 1.4545cap; transform: translateY(.2273cap); }
 .brand-word { font-weight: 700; letter-spacing: .2em; font-size: 15px; }
 
 .search { position: relative; }

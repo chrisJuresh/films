@@ -108,7 +108,7 @@
 
     {#if q.trim().length < 2}
       <div class="welcome">
-        <span class="mark"><Icon name="diamond" size={20} /></span>
+        <span class="mark"><Icon name="film" size={24} /></span>
         <p>Search TMDB, then add the exact film you want.</p>
         <small>It gets a full film page and works with your lists, downloads and playback.</small>
       </div>

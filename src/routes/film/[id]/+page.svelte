@@ -490,7 +490,7 @@
 
       <div class="chips">
         {#if film.manually_added}
-          <span class="chip rank manual"><Icon name="diamond" size={11} stroke={2.1} /> Added to Film Index</span>
+          <span class="chip rank manual"><Icon name="film" size={14} /> Added to Film Index</span>
         {:else}
           <span class="chip rank">#{film.latest_rank} · TSPDT</span>
         {/if}
@@ -786,7 +786,7 @@
 
   {#if film.manually_added}
     <section class="block manual-origin">
-      <span><Icon name="diamond" size={16} stroke={2} /></span>
+      <span><Icon name="film" size={20} /></span>
       <div><b>Manually added</b><p>This film sits after the ranked catalogue. If it appears in a future TSPDT edition, its lists, playback and download history will merge into the official ranked entry automatically.</p></div>
     </section>
   {:else}

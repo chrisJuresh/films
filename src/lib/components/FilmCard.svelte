@@ -68,7 +68,7 @@
   <div class="pw">
     <Poster title={film.title} rank={manuallyAdded ? null : film.rank} src={poster} />
     {#if manuallyAdded}
-      <span class="rank manual" title="Manually added to Film Index"><Icon name="diamond" size={10} stroke={2.1} /> ADDED</span>
+      <span class="rank manual" title="Manually added to Film Index"><Icon name="film" size={11} /> ADDED</span>
     {:else}
       <span class="rank">#{film.rank}</span>
     {/if}

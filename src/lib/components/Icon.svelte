@@ -13,7 +13,9 @@
     sun:       '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
     moon:      '<path d="M20 14.5A8 8 0 1 1 9.5 4 6.3 6.3 0 0 0 20 14.5z"/>',
     sparkles:  '<path d="M12 3l1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z" fill="currentColor" stroke="none"/>',
-    diamond:   '<path d="M12 2.5 21.5 12 12 21.5 2.5 12z"/>',
+    // Brand mark — Phosphor "film-strip" (MIT), drawn on a 256 grid so it is
+    // scaled down onto this set's 24 grid. Solid, so it ignores `stroke`.
+    film:      '<g transform="scale(.09375)" fill="currentColor" stroke="none"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40ZM40,88h80v80H40Zm96-16V56h32V72Zm-16,0H88V56h32Zm0,112v16H88V184Zm16,0h32v16H136Zm0-16V88h80v80Zm80-96H184V56h32ZM72,56V72H40V56ZM40,184H72v16H40Zm176,16H184V184h32v16Z"/></g>',
     sync:      '<path d="M20 11a8 8 0 0 0-14-4.5L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14 4.5L20 16"/><path d="M20 20v-4h-4"/>',
     x:         '<path d="M6 6l12 12M18 6 6 18"/>',
     search:    '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
