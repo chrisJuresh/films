@@ -72,9 +72,9 @@
 <div class="results-bar">
   <div class="rb-count">{total.toLocaleString()} <span>titles</span></div>
   <div class="rb-tools">
-    <!-- "Add film" writes to the shared catalogue, so it is off in the demo:
-         one visitor must not be able to change what another sees. -->
-    {#if data.meta?.tmdb && !data.demo}
+    <!-- Kept in the demo, but read-only: the search is worth showing, while the
+         write is not one visitor's to make — see AddFilmDialog's `demo` prop. -->
+    {#if data.meta?.tmdb}
       <button class="rb-add" onclick={() => (addOpen = true)} title="Add a movie outside the TSPDT list">
         <Icon name="plus" size={15} stroke={2.2} /><span>Add film</span>
       </button>
@@ -106,9 +106,7 @@
   {#if loading}<div class="loading"><span></span><span></span><span></span></div>{/if}
 </main>
 
-{#if !data.demo}
-  <AddFilmDialog open={addOpen} onclose={() => (addOpen = false)} />
-{/if}
+<AddFilmDialog open={addOpen} demo={data.demo} onclose={() => (addOpen = false)} />
 
 <style>
   .results-bar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center;

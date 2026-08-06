@@ -12,13 +12,15 @@
 // an anonymous per-visitor cookie identity, and the acquisition/playback routes
 // refused outright. See lib/server/demo.js.
 import { error } from '@sveltejs/kit';
-import { isDemo, demoUser, blockedInDemo } from '$lib/server/demo.js';
+import { isDemo, demoUser, demoRefusal } from '$lib/server/demo.js';
 
 export async function handle({ event, resolve }) {
   if (isDemo()) {
-    // Refuse the home-server-only routes before anything else runs, so the demo
-    // is genuinely without them rather than merely missing the buttons.
-    if (blockedInDemo(event.url.pathname)) error(404, 'Not available in the demo');
+    // Refuse the home-server-only routes, and the writes to shared state, before
+    // anything else runs — so the demo genuinely lacks them rather than merely
+    // lacking (or greying out) the buttons.
+    const refused = demoRefusal(event.url.pathname, event.request.method);
+    if (refused) error(refused.status, refused.message);
     event.locals.demo = true;
     event.locals.user = demoUser(event.cookies);
     return resolve(event);

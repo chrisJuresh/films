@@ -112,10 +112,14 @@ changes is defined in one place, [`src/lib/server/demo.js`](../src/lib/server/de
   `locals.user`. Every per-user table is already keyed on that column, so one
   visitor's lists are invisible to every other visitor — no data-layer change.
 - **The home-server routes are refused**, not hidden: `hooks.server.js` returns
-  404 for them before any handler runs. `/api/manual-films` is refused too, since
-  it writes the shared catalogue and one visitor must not change what another
-  sees. "Watch" becomes legal availability (TMDB's JustWatch feed, cached in
-  `film_watch`).
+  404 for them before any handler runs. "Watch" becomes legal availability
+  (TMDB's JustWatch feed, cached in `film_watch`).
+- **Add film is kept, but read-only.** The dialog and its TMDB search are worth
+  showing, so `/api/manual-films` answers `GET` — metered per visitor, since the
+  endpoint is public and spends our TMDB key — while `POST` is refused with 403.
+  A watchlist entry is one visitor's row; a manual film is a row in the shared
+  catalogue, so it is not one visitor's to add. The dialog's Add button is
+  disabled and says why, and the hook refuses a hand-made POST regardless.
 - **The container has nothing to reach anyway**: no `a3-arr` network, no iGPU
   device, no media mount, no Radarr credentials.
 

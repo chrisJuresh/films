@@ -4,7 +4,12 @@
   import { gradientFor } from '$lib/util.js';
   import { toast } from '$lib/stores.js';
 
-  let { open = false, onclose = () => {} } = $props();
+  // `demo`: the public build. The dialog is fully usable up to the last step —
+  // search runs, results render — but adding is disabled, because a manual film
+  // is a row in the shared catalogue rather than a per-visitor one. The server
+  // refuses the POST regardless (hooks.server.js); this is the honest button.
+  let { open = false, demo = false, onclose = () => {} } = $props();
+  const LOCKED = 'Disabled in the demo — a new film would join the catalogue every visitor sees.';
   let q = $state('');
   let items = $state([]);
   let loading = $state(false);
@@ -67,7 +72,7 @@
   }
 
   async function add(movie) {
-    if (adding != null) return;
+    if (demo || adding != null) return;
     adding = movie.tmdb_id;
     message = '';
     try {
@@ -94,7 +99,7 @@
     <header>
       <div>
         <h2 id="add-film-title">Add a film</h2>
-        <p>Find any movie that isn’t already in Film Index.</p>
+        <p>{demo ? 'Search any movie that isn’t already in Film Index.' : 'Find any movie that isn’t already in Film Index.'}</p>
       </div>
       <button class="close" onclick={close} aria-label="Close"><Icon name="x" size={17} /></button>
     </header>
@@ -110,7 +115,12 @@
       <div class="welcome">
         <span class="mark"><Icon name="film" size={24} /></span>
         <p>Search TMDB, then add the exact film you want.</p>
-        <small>It gets a full film page and works with your lists, downloads and playback.</small>
+        {#if demo}
+          <small>On the private instance it gets a full film page and works with your lists, downloads
+            and playback. Here the search is live, but adding is disabled — see below.</small>
+        {:else}
+          <small>It gets a full film page and works with your lists, downloads and playback.</small>
+        {/if}
       </div>
     {:else}
       <div class="result-label"><span>Movies</span><span>Results from TMDB</span></div>
@@ -134,6 +144,11 @@
               </div>
               {#if movie.existing_id != null}
                 <a class="existing" href="/film/{movie.existing_id}" onclick={close}><Icon name="check" size={12} stroke={2.5} /> Added</a>
+              {:else if demo}
+                <button class="add locked" disabled title={LOCKED}
+                        aria-label="Add {movie.title} — {LOCKED}" aria-describedby="add-film-note">
+                  <Icon name="lock" size={14} /><span>Add</span>
+                </button>
               {:else}
                 <button class="add" onclick={() => add(movie)} disabled={adding != null} aria-label="Add {movie.title}">
                   <Icon name={adding === movie.tmdb_id ? 'sync' : 'plus'} size={14} spin={adding === movie.tmdb_id} />
@@ -146,7 +161,16 @@
       </div>
     {/if}
 
-    <footer><i></i>If a future TSPDT edition includes it, the manual entry merges into its official ranking automatically.</footer>
+    <footer id="add-film-note">
+      <i></i>
+      {#if demo}
+        Adding is disabled in this demo. Your watchlist and seen marks are private to your browser, but
+        a manual film is a row in the catalogue everyone browses — so that one is kept to the private
+        instance, where it merges into a future TSPDT edition’s ranking automatically.
+      {:else}
+        If a future TSPDT edition includes it, the manual entry merges into its official ranking automatically.
+      {/if}
+    </footer>
   </dialog>
 {/if}
 
@@ -198,6 +222,10 @@
   .add { border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; }
   .add:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
   .add:disabled { opacity: .62; cursor: default; }
+  /* Demo: shown, but plainly not on offer — drop the accent's invitation rather
+     than just dimming it, so it doesn't read as "still loading". */
+  .add.locked { border-color: var(--border); background: var(--surface-2); color: var(--faint);
+    opacity: 1; cursor: not-allowed; }
   .existing { border: 1px solid var(--border); background: var(--surface-2); color: var(--faint); }
   .existing:hover { color: var(--text); border-color: var(--border-strong); }
   .state { min-height: 130px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 13px; }

@@ -1,6 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import { createManualFilm, searchManualFilms } from '$lib/server/manualFilms.js';
 import { TmdbError } from '$lib/server/tmdbClient.js';
+import { demoSearchAllowed } from '$lib/server/demo.js';
 
 function fail(cause) {
   if (cause instanceof TmdbError) throw error(cause.status, cause.message);
@@ -8,10 +9,15 @@ function fail(cause) {
   throw error(500, 'The film could not be added.');
 }
 
-export async function GET({ url }) {
+export async function GET({ url, locals }) {
   const q = String(url.searchParams.get('q') || '').trim();
   if (q.length < 2) return json({ items: [] });
   if (q.length > 100) throw error(400, 'Search text is too long.');
+  // Behind Access this is one known person; in the demo it is the open internet
+  // spending our TMDB key, so meter it per visitor.
+  if (locals.demo && !demoSearchAllowed(locals.user)) {
+    throw error(429, 'Too many searches just now — give it a moment.');
+  }
   try { return json({ items: await searchManualFilms(q) }); }
   catch (cause) { fail(cause); }
 }
