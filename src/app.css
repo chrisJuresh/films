@@ -69,8 +69,8 @@ input, button, select { font-family: inherit; }
 
 .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; color: inherit; padding: 2px; }
 /* Hug the icon (no inherited line box) so flex centring lines it up with the
-   wordmark's caps, then nudge 1px for the cap-height/line-box offset. */
-.brand-mark { color: var(--accent); display: flex; align-items: center; transform: translateY(-1px); }
+   wordmark's caps rather than with an oversized inherited line box. */
+.brand-mark { color: var(--accent); display: flex; align-items: center; }
 .brand-word { font-weight: 700; letter-spacing: .2em; font-size: 15px; }
 
 .search { position: relative; }
