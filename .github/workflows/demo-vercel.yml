@@ -1,0 +1,47 @@
+name: demo-vercel-front
+
+# Redeploys the TLS front for demo.films.chrisj.uk (deploy/vercel-demo) whenever
+# it changes on main, so nothing here needs a hand-run `npx vercel --prod`.
+#
+# This is a rewrite-only project — there is no build and no application code, so
+# it is only worth redeploying when the rewrite itself (or this workflow)
+# changes. The demo *site* is a container image built by deploy.yml and pulled by
+# Watchtower; a change to src/** goes out through that path, not this one.
+#
+# Needs one secret: VERCEL_TOKEN (Vercel → Account Settings → Tokens). The org
+# and project ids are not credentials but are kept as variables so nothing about
+# the account is hard-coded in a public repo. Without the token this workflow
+# no-ops with a warning rather than failing every push.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/vercel-demo/**'
+      - '.github/workflows/demo-vercel.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: demo-vercel
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: deploy/vercel-demo
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy the rewrite to production
+        run: |
+          if [ -z "$VERCEL_TOKEN" ] || [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "::warning::VERCEL_TOKEN secret or VERCEL_PROJECT_ID variable is unset — skipping. See deploy/vercel-demo/README.md."
+            exit 0
+          fi
+          npx --yes vercel@latest deploy --prod --yes --token="$VERCEL_TOKEN"

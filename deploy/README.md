@@ -135,6 +135,10 @@ films-demo.chrisj.uk   Cloudflare tunnel (proxied) -> http://films-demo:3000
 `ORIGIN` is set to the Vercel hostname, so that is the origin SvelteKit's CSRF
 check compares against and the canonical name in generated URLs.
 
+That front is one `vercel.json` rewrite and nothing else, kept in
+[`vercel-demo/`](vercel-demo/README.md) — including how it is deployed (a push to
+`main` redeploys it) and why the DNS record for it must stay **unproxied**.
+
 ### Seeding / re-seeding its database
 
 The demo runs on its **own copy** at `/srv/films-demo`, never the private one:
