@@ -351,8 +351,7 @@
   .topstrip { --strip-h: 40px;
     display: flex; align-items: center; justify-content: space-between; gap: 18px;
     padding: 0 18px; min-height: var(--strip-h);
-    background: color-mix(in srgb, var(--surface) 82%, transparent);
-    backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
+    background: var(--surface); border-bottom: 1px solid var(--border);
     font-size: 12.5px; color: var(--muted); }
   /* Sticky on desktop only — on a phone the vertical space is worth more than
      the reminder, so it scrolls away and the app bar keeps the top edge. */
