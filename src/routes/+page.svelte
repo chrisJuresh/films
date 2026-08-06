@@ -72,7 +72,9 @@
 <div class="results-bar">
   <div class="rb-count">{total.toLocaleString()} <span>titles</span></div>
   <div class="rb-tools">
-    {#if data.meta?.tmdb}
+    <!-- "Add film" writes to the shared catalogue, so it is off in the demo:
+         one visitor must not be able to change what another sees. -->
+    {#if data.meta?.tmdb && !data.demo}
       <button class="rb-add" onclick={() => (addOpen = true)} title="Add a movie outside the TSPDT list">
         <Icon name="plus" size={15} stroke={2.2} /><span>Add film</span>
       </button>
@@ -96,7 +98,7 @@
   {:else}
     <div class="grid">
       {#each items as film (film.id_tspdt)}
-        <FilmCard {film} onstatus={onStatus} postersEnabled={data.meta?.tmdb} />
+        <FilmCard {film} onstatus={onStatus} postersEnabled={data.meta?.tmdb} demo={data.demo} />
       {/each}
     </div>
   {/if}
@@ -104,7 +106,9 @@
   {#if loading}<div class="loading"><span></span><span></span><span></span></div>{/if}
 </main>
 
-<AddFilmDialog open={addOpen} onclose={() => (addOpen = false)} />
+{#if !data.demo}
+  <AddFilmDialog open={addOpen} onclose={() => (addOpen = false)} />
+{/if}
 
 <style>
   .results-bar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center;

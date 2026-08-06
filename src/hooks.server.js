@@ -7,8 +7,25 @@
 // the header cannot be set by an outside client. When Access is not in front
 // (local dev, or the loopback health check), there is no header and everyone
 // shares a single 'local' identity, which is the old shared behaviour.
+//
+// The public demo has no Access in front of it, so it takes the other branch:
+// an anonymous per-visitor cookie identity, and the acquisition/playback routes
+// refused outright. See lib/server/demo.js.
+import { error } from '@sveltejs/kit';
+import { isDemo, demoUser, blockedInDemo } from '$lib/server/demo.js';
+
 export async function handle({ event, resolve }) {
+  if (isDemo()) {
+    // Refuse the home-server-only routes before anything else runs, so the demo
+    // is genuinely without them rather than merely missing the buttons.
+    if (blockedInDemo(event.url.pathname)) error(404, 'Not available in the demo');
+    event.locals.demo = true;
+    event.locals.user = demoUser(event.cookies);
+    return resolve(event);
+  }
+
   const email = event.request.headers.get('cf-access-authenticated-user-email');
+  event.locals.demo = false;
   event.locals.user = (email || process.env.TSPDT_DEFAULT_USER || 'local').trim().toLowerCase();
   return resolve(event);
 }

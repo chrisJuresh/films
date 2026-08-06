@@ -5,7 +5,7 @@
   import { displayTitle } from '$lib/util.js';
   import { counts, toast } from '$lib/stores.js';
 
-  let { film, onstatus = () => {}, postersEnabled = false } = $props();
+  let { film, onstatus = () => {}, postersEnabled = false, demo = false } = $props();
   let status = $state(film.status ?? null);       // site status: watchlist|seen|rewatch|unfinished|null
   let lbState = $state(film.lb_state ?? null);    // letterboxd:  watched|unwatched|null
   let poster = $state(null);
@@ -16,8 +16,10 @@
   let seen = $derived(status === 'seen' || lbWatched);
   let rewatch = $derived(status === 'rewatch');
   let unfinished = $derived(status === 'unfinished');
-  // Radarr download state (global, not per-user): downloaded|downloading|wanted|error
-  let download = $derived(film.download ?? null);
+  // Radarr download state (global, not per-user): downloaded|downloading|wanted|error.
+  // The demo has no Radarr, so it never shows a library/download indicator even
+  // if a stale row survived in the database it was seeded from.
+  let download = $derived(demo ? null : (film.download ?? null));
   let dlProgress = $derived(film.download_progress ?? null);   // 0-100 while downloading
   // Watched progress (your resume position vs the film's runtime), shown when in-progress.
   let watchedPct = $derived.by(() => {

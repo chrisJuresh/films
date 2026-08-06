@@ -99,6 +99,12 @@
   let dl = $derived(data?.downloads);
   let hasDownloads = $derived(!!(dl && (dl.downloaded || dl.downloading || dl.wanted || dl.error)));
 
+  // Public demo: no login, no library, no acquisition. The server already
+  // refuses those routes (hooks.server.js); this only removes the affordances.
+  let demo = $derived(!!data?.demo);
+  let github = $derived(data?.github || 'https://github.com/chrisJuresh/films');
+  const TSPDT_URL = 'https://theyshootpictures.com';
+
   // Age-rating slider. maxage = highest rating age to show; 18 = off (everything,
   // including unrated). A film's age is its most-restrictive country rating, so
   // nothing unsuitable slips into a lower bracket.
@@ -123,6 +129,31 @@
   );
 </script>
 
+{#if demo}
+<!-- Top strip: what this build is, and where the whole thing lives. Also the
+     one piece of chrome present on every page (film pages have no sidebar), so
+     it carries the credit link to the ranking's source. -->
+<div class="topstrip">
+  <p class="ts-note">
+    <span class="ts-pill">Demo</span>
+    <span class="ts-text">
+      <b>Limited functionality.</b>
+      The parts of the app that depend on a private home server are inactive here — browsing, filtering, search and your own lists all work as normal.
+    </span>
+  </p>
+  <div class="ts-links">
+    <a class="ts-link" href={TSPDT_URL} target="_blank" rel="noopener"
+       title="They Shoot Pictures, Don't They? — the critics' poll this catalogue ranks">
+      <span class="ts-lk-label">Ranking by</span> TSPDT<Icon name="external" size={12} stroke={2} />
+    </a>
+    <a class="ts-link strong" href={github} target="_blank" rel="noopener"
+       title="The complete application, including the parts that are inactive here">
+      <Icon name="github" size={13} /> Full source
+    </a>
+  </div>
+</div>
+{/if}
+
 {#if !onFilm}
 <header class="mobilebar">
   <button class="mb-burger" onclick={() => (menuOpen = true)} aria-label="Open filters and menu" aria-expanded={menuOpen}>
@@ -137,7 +168,7 @@
 </header>
 {/if}
 
-<div class="app" class:full={onFilm}>
+<div class="app" class:full={onFilm} class:has-strip={demo}>
   {#if !onFilm}
   <div class="scrim" class:show={menuOpen} onclick={closeMenu} aria-hidden="true"></div>
   <aside class="sidebar" class:open={menuOpen}>
@@ -272,7 +303,14 @@
           <span>{userEmail}</span>
         </div>
       {/if}
-      {#if isTauri}
+      {#if demo}
+        <!-- The desktop app only has something to play on the private instance,
+             so the demo points at the code instead of an installer. -->
+        <a class="theme" href={github} target="_blank" rel="noopener"
+           title="Demo build — the complete application is on GitHub">
+          <Icon name="github" size={15} /> Demo · source on GitHub
+        </a>
+      {:else if isTauri}
         {#if update?.available}
           <button class="theme app-upd" onclick={openRelease} title="A newer version is available — click to download"><Icon name="download" size={15} /> Update · v{update.latest}</button>
         {:else if update}
@@ -305,6 +343,63 @@
 <Toast />
 
 <style>
+  /* ---------------------------------------------- demo top strip --------- */
+  /* Slim, full-width band above the whole shell: what this build is, and the
+     two outbound credits (the ranking's source, and the real source code).
+     Borrows the sidebar's vocabulary — surface fill, hairline border, accent
+     pill — so it reads as chrome rather than as a browser notification. */
+  .topstrip { --strip-h: 40px;
+    display: flex; align-items: center; justify-content: space-between; gap: 18px;
+    padding: 0 18px; min-height: var(--strip-h);
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+    backdrop-filter: blur(10px); border-bottom: 1px solid var(--border);
+    font-size: 12.5px; color: var(--muted); }
+  /* Sticky on desktop only — on a phone the vertical space is worth more than
+     the reminder, so it scrolls away and the app bar keeps the top edge. */
+  @media (min-width: 821px) {
+    .topstrip { position: sticky; top: 0; z-index: 85; }
+    /* Sidebar and the catalogue toolbar both pin to the top; move them below
+       the strip so nothing hides underneath it. */
+    :global(.app.has-strip .sidebar) { top: var(--strip-h, 40px); height: calc(100vh - var(--strip-h, 40px)); }
+    :global(.app.has-strip .results-bar) { top: var(--strip-h, 40px); }
+  }
+
+  .ts-note { display: flex; align-items: center; gap: 10px; margin: 0; min-width: 0; }
+  .ts-pill { flex: none; padding: 2.5px 8px; border-radius: 999px; background: var(--accent);
+    color: var(--accent-ink); font-size: 10px; font-weight: 700; letter-spacing: .12em;
+    text-transform: uppercase; }
+  .ts-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ts-text b { color: var(--text); font-weight: 600; }
+
+  .ts-links { flex: none; display: flex; align-items: center; gap: 8px; }
+  .ts-link { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px;
+    border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+    color: var(--muted); text-decoration: none; font-size: 12px; white-space: nowrap;
+    transition: color .12s, border-color .12s, background .12s; }
+  .ts-link:hover { color: var(--text); border-color: var(--border-strong); }
+  .ts-link .ts-lk-label { color: var(--faint); }
+  .ts-link:hover .ts-lk-label { color: var(--muted); }
+  .ts-link :global(.icon) { opacity: .75; }
+  .ts-link:hover :global(.icon) { opacity: 1; }
+  /* The source link is the one action worth taking from here. */
+  .ts-link.strong { color: var(--text); font-weight: 600;
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+  .ts-link.strong:hover { border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+  .ts-link.strong :global(.icon) { opacity: 1; color: var(--accent); }
+
+  @media (max-width: 980px) {
+    /* Keep the sentence honest but short once it can't fit whole. */
+    .ts-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  }
+  @media (max-width: 820px) {
+    .topstrip { flex-wrap: wrap; gap: 8px 12px; padding: 9px 12px; font-size: 12px; }
+    .ts-note { align-items: flex-start; }
+    .ts-pill { margin-top: 1px; }
+    .ts-links { width: 100%; }
+    .ts-link { flex: 1; justify-content: center; padding: 8px 10px; }
+  }
+
   /* Floating update prompt for film pages (the sidebar's pill isn't shown there). */
   .update-fab { position: fixed; left: 18px; bottom: 18px; z-index: 150; display: inline-flex;
     align-items: center; gap: 8px; padding: 11px 16px; border-radius: 999px; border: none; cursor: pointer;

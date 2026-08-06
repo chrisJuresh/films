@@ -102,6 +102,53 @@ The API key stays in the SvelteKit server. A click looks the film up by its IMDb
 id, adds and searches it when new, searches it when it is already monitored but
 missing, and does nothing destructive when Radarr already has the file.
 
+## Public demo
+
+`https://demo.films.chrisj.uk` is the same image with `DEMO_MODE=1`. What that
+changes is defined in one place, [`src/lib/server/demo.js`](../src/lib/server/demo.js):
+
+- **No login.** There is no Access application in front of it, so each visitor
+  gets an opaque random id in an `httpOnly` cookie and that becomes
+  `locals.user`. Every per-user table is already keyed on that column, so one
+  visitor's lists are invisible to every other visitor — no data-layer change.
+- **The home-server routes are refused**, not hidden: `hooks.server.js` returns
+  404 for them before any handler runs. `/api/manual-films` is refused too, since
+  it writes the shared catalogue and one visitor must not change what another
+  sees. "Watch" becomes legal availability (TMDB's JustWatch feed, cached in
+  `film_watch`).
+- **The container has nothing to reach anyway**: no `a3-arr` network, no iGPU
+  device, no media mount, no Radarr credentials.
+
+### Why Vercel is in front of it
+
+Cloudflare's Universal SSL covers `chrisj.uk` and `*.chrisj.uk` but **not** a
+third-level name, so a proxied `demo.films.chrisj.uk` would serve a certificate
+that doesn't match. A cert for it needs Advanced Certificate Manager (paid). So:
+
+```
+demo.films.chrisj.uk   Vercel (free cert for the exact name, DNS-only record)
+        │  rewrite
+        ▼
+films-demo.chrisj.uk   Cloudflare tunnel (proxied) -> http://films-demo:3000
+```
+
+`ORIGIN` is set to the Vercel hostname, so that is the origin SvelteKit's CSRF
+check compares against and the canonical name in generated URLs.
+
+### Seeding / re-seeding its database
+
+The demo runs on its **own copy** at `/srv/films-demo`, never the private one:
+
+```bash
+node ~/films/deploy/demo-db.mjs /srv/films/tspdt.db /srv/films-demo/tspdt.db
+docker compose up -d films-demo
+```
+
+`demo-db.mjs` uses `VACUUM INTO` (no downtime for the live site) and then drops
+`user_status`, `lb_seen`, `lb_unmatched`, `playback` and `film_download`, and
+anonymises `manual_films.added_by` — so no personal viewing history and no
+library state reach the public copy. Re-run it after each catalogue sync.
+
 ## Refreshing the catalogue (new TSPDT edition / data)
 
 ```bash

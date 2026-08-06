@@ -3,5 +3,5 @@ import { queryFilms } from '$lib/server/db.js';
 
 export function GET({ url, locals }) {
   const p = Object.fromEntries(url.searchParams);
-  return json(queryFilms({ ...p, user: locals.user }));
+  return json(queryFilms({ ...p, user: locals.user, demo: locals.demo }));
 }

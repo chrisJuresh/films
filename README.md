@@ -138,7 +138,10 @@ A thin Tauri v2 wrapper around the site that adds native playback and offline co
 
 Personal project, in active development (July 2026). Built for one homelab, so some defaults reflect that hardware (Intel UHD 770 iGPU, specific media mounts) — all overridable via environment variables. Known limitations:
 
-- The live instance is private (Cloudflare Access), so there is no public demo.
+- The live instance is private (Cloudflare Access). A public, login-free build of
+  the catalogue runs at **[demo.films.chrisj.uk](https://demo.films.chrisj.uk)** —
+  same ranking, search, facets and per-visitor lists, without the home-server
+  integrations (see [`deploy/README.md`](deploy/README.md#public-demo)).
 - In-browser streaming of non-web codecs is a live transcode: instant, but with limited seeking until a one-time encoded copy is made.
 - mpv position sync captures where you stopped (via mpv's watch-later file on quit); continuous in-playback polling over mpv's IPC socket is a noted follow-up.
 - The download pipeline assumes an existing Radarr (and optionally Prowlarr/qBittorrent) install; this app orchestrates your own tools rather than replacing them.

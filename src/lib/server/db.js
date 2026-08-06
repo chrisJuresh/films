@@ -79,6 +79,15 @@ function getDb() {
       json          TEXT NOT NULL,
       fetched_at    TEXT DEFAULT (datetime('now'))
     );
+    -- Legal streaming availability (TMDB's JustWatch feed), per film, all
+    -- cached regions in one blob. Separate from film_meta because it changes on
+    -- its own schedule -- a licence lapses long before a cast list does -- so it
+    -- carries its own, shorter TTL instead of waiting on the enrichment cache.
+    CREATE TABLE IF NOT EXISTS film_watch (
+      id_tspdt   INTEGER PRIMARY KEY REFERENCES films(id_tspdt) ON DELETE CASCADE,
+      json       TEXT NOT NULL,
+      fetched_at TEXT DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS playback (
       cf_user    TEXT NOT NULL,
       id_tspdt   INTEGER NOT NULL REFERENCES films(id_tspdt) ON DELETE CASCADE,
@@ -247,6 +256,9 @@ const LIKE = "LIKE ? ESCAPE '\\'";
 export function queryFilms(p = {}) {
   const db = getDb();
   const user = p.user ?? 'local';                                  // per-user watchlist/seen (Cloudflare identity)
+  // The demo has no library behind it, so film_download is not just hidden —
+  // it is never read, and never reaches the page payload.
+  const demo = !!p.demo;
   const where = ['f.removed_at IS NULL', '(f.latest_rank IS NOT NULL OR mf.id_tspdt IS NOT NULL)'];
   const args = [];
   if (p.q) { where.push(`(f.title ${LIKE} OR f.director ${LIKE})`); args.push(`%${likeEsc(p.q)}%`, `%${likeEsc(p.q)}%`); }
@@ -277,7 +289,7 @@ export function queryFilms(p = {}) {
     where.push('EXISTS (SELECT 1 FROM film_age fa WHERE fa.id_tspdt = f.id_tspdt AND fa.min_age <= ?)');
     args.push(maxage);
   }
-  if (['downloaded', 'downloading', 'wanted', 'error'].includes(p.radarr)) {   // Radarr download-state filter
+  if (!demo && ['downloaded', 'downloading', 'wanted', 'error'].includes(p.radarr)) {   // Radarr download-state filter
     where.push('EXISTS (SELECT 1 FROM film_download fd WHERE fd.id_tspdt = f.id_tspdt AND fd.state = ?)');
     args.push(p.radarr);
   }
@@ -287,7 +299,7 @@ export function queryFilms(p = {}) {
   const joins = `LEFT JOIN manual_films mf ON mf.id_tspdt = f.id_tspdt AND mf.merged_into IS NULL
      LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
      LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
-     LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt
+     ${demo ? '' : 'LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt'}
      LEFT JOIN playback pb ON pb.id_tspdt = f.id_tspdt AND pb.cf_user = ?`;
   const joinArgs = [user, user, user];
   // "seen" spans both trackers; "watchlist" is site-only.
@@ -312,7 +324,8 @@ export function queryFilms(p = {}) {
     `SELECT f.id_tspdt, f.latest_rank AS rank, f.title, f.year, f.director, f.country,
             f.genre, f.length_min, f.colour, f.imdb_id, f.imdb_url, f.tmdb_id, f.is_new,
             CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END AS manually_added,
-            us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress,
+            us.status, lb.state AS lb_state,
+            ${demo ? '' : 'fd.state AS download, fd.progress AS download_progress,'}
             pb.position AS pb_position, pb.duration AS pb_duration
      FROM films f ${joins} WHERE ${wc}
      ORDER BY ${manualLast}, ${sort} ${order}, f.latest_rank ASC, mf.added_at ASC, f.id_tspdt ASC
@@ -365,19 +378,20 @@ export function getFilmBasic(id) {
   ).get(actual) || null;
 }
 
-export function getFilm(id, user = 'local') {
+export function getFilm(id, user = 'local', demo = false) {
   const db = getDb();
   const actual = resolveFilmId(db, id);
   if (actual == null) return null;
   const row = db.prepare(
-    `SELECT f.*, us.status, lb.state AS lb_state, fd.state AS download, fd.progress AS download_progress,
+    `SELECT f.*, us.status, lb.state AS lb_state,
+            ${demo ? '' : 'fd.state AS download, fd.progress AS download_progress,'}
             CASE WHEN mf.id_tspdt IS NULL THEN 0 ELSE 1 END AS manually_added,
             mf.added_at AS manually_added_at
      FROM films f
      LEFT JOIN manual_films mf ON mf.id_tspdt = f.id_tspdt AND mf.merged_into IS NULL
      LEFT JOIN user_status us ON us.id_tspdt = f.id_tspdt AND us.cf_user = ?
      LEFT JOIN lb_seen lb ON lb.id_tspdt = f.id_tspdt AND lb.cf_user = ?
-     LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt
+     ${demo ? '' : 'LEFT JOIN film_download fd ON fd.id_tspdt = f.id_tspdt'}
      WHERE f.id_tspdt = ?`
   ).get(user, user, actual);
   if (!row) return null;
@@ -573,6 +587,21 @@ export function setMetaCache(id, obj, level) {
   if (Number.isSafeInteger(obj?.tmdb_id) && obj.tmdb_id > 0) {
     db.prepare('UPDATE films SET tmdb_id=COALESCE(tmdb_id,?) WHERE id_tspdt=?').run(obj.tmdb_id, id);
   }
+}
+
+/* ------------------------------------------ where-to-watch cache -------- */
+export function getWatchCache(id) {
+  const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
+  return db.prepare('SELECT json, fetched_at FROM film_watch WHERE id_tspdt = ?').get(id) || null;
+}
+export function setWatchCache(id, obj) {
+  const db = getDb();
+  id = resolveFilmId(db, id) ?? id;
+  db.prepare(
+    `INSERT INTO film_watch(id_tspdt, json, fetched_at) VALUES(?,?,datetime('now'))
+     ON CONFLICT(id_tspdt) DO UPDATE SET json=excluded.json, fetched_at=excluded.fetched_at`
+  ).run(id, JSON.stringify(obj));
 }
 
 /* -------------------------------------------------- playback position ---- */

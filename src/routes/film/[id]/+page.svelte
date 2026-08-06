@@ -18,6 +18,7 @@
   onMount(() => {
     const t = window.__TAURI__;
     try { saveDir = localStorage.getItem('films-save-dir') || ''; } catch { /* ignore */ }
+    try { region = localStorage.getItem('films-region') || ''; } catch { /* ignore */ }
     if (t?.core?.invoke) {
       t.core.invoke('check_update').then((u) => { updateInfo = u; }).catch(() => {});
       fetch('/api/app-auth').then((r) => r.json()).then((a) => { cfAuth = a; }).catch(() => {});
@@ -32,6 +33,15 @@
 
   let { data } = $props();
   let film = $derived(data.film);
+  // Public demo: no library to play from, so "watch" becomes "where can I watch
+  // this legally" (TMDB's JustWatch feed). The acquisition endpoints are refused
+  // server-side, so none of the Radarr/encode/stream paths below are reachable.
+  let demo = $derived(!!data.demo);
+  let github = $derived(data.github || 'https://github.com/chrisJuresh/films');
+  let where = $state(null);            // { enabled, regions:{CC:{link,stream,rent,buy,free}}, region, regionNames }
+  let region = $state('');             // chosen country — a preference, kept across films
+  let regionMenu = $state(false);
+  let regionEl;
   // Preload ("Save to PC") progress from the global store, so it survives navigation.
   let dlToPc = $derived($downloads[film.id_tspdt] || null);
   // When a preload completes (even one started before we navigated here), adopt the local file.
@@ -113,8 +123,10 @@
     dlMenu = false; saveMenu = false; grabLinks = null; pbCleared = false; certsOpen = false;
     localPath = null;   // dlToPc is derived from the global store; don't reset it here
     clearTimeout(radarrTimer); clearTimeout(watchTimer);
-    loadRadarr(id); loadWatch(id);
-    if (isTauri && window.__TAURI__?.core) window.__TAURI__.core.invoke('local_file', { id }).then((p) => { if (loadedId === id) localPath = p; }).catch(() => {});
+    where = null; regionMenu = false;
+    if (demo) loadWhere(id);
+    else loadRadarr(id), loadWatch(id);
+    if (!demo && isTauri && window.__TAURI__?.core) window.__TAURI__.core.invoke('local_file', { id }).then((p) => { if (loadedId === id) localPath = p; }).catch(() => {});
     fetch(`/api/meta/${id}`).then((r) => r.json())
       .then((mm) => { if (loadedId === id) meta = mm; }).catch(() => { if (loadedId === id) meta = { enabled: false }; });
   });
@@ -386,6 +398,37 @@
       if (w?.encode?.state === 'running') watchTimer = setTimeout(() => loadWatch(id), 2500);
     } catch { /* best-effort */ }
   }
+
+  /* ---- demo: legal availability (TMDB's JustWatch feed) ---- */
+  async function loadWhere(id) {
+    try {
+      const w = await (await fetch(`/api/where/${id}`)).json();
+      if (loadedId !== id) return;
+      where = w;
+      // Only adopt the edge-guessed country if the visitor hasn't chosen one.
+      if (!region || !w.regionNames?.some((r) => r.code === region)) region = w.region;
+    } catch { if (loadedId === id) where = { enabled: true, regions: {}, stale: true }; }
+  }
+  function pickRegion(code) {
+    region = code; regionMenu = false;
+    try { localStorage.setItem('films-region', code); } catch { /* ignore */ }
+  }
+  let offers = $derived(region ? (where?.regions?.[region] || null) : null);
+  const REGION_NAME = (code) => (where?.regionNames || []).find((r) => r.code === code)?.name || code;
+  // Only offer to switch to countries this film is actually available in —
+  // a list of dead ends would be worse than no list.
+  let regionOptions = $derived((where?.regionNames || []).filter((r) => where?.regions?.[r.code]));
+  // The four ways to watch, in the order a viewer cares about: free before paid,
+  // subscription before transactional.
+  let offerRows = $derived.by(() => {
+    if (!offers) return [];
+    return [
+      { key: 'free', label: 'Free', hint: 'free, or free with ads' },
+      { key: 'stream', label: 'Stream', hint: 'included with a subscription' },
+      { key: 'rent', label: 'Rent', hint: null },
+      { key: 'buy', label: 'Buy', hint: null }
+    ].filter((r) => offers[r.key]?.length).map((r) => ({ ...r, items: offers[r.key] }));
+  });
   async function startEncode() {
     try {
       const r = await fetch(`/api/encode/${film.id_tspdt}`, { method: 'POST' });
@@ -454,6 +497,7 @@
   if (watchMenu && splitEl && !splitEl.contains(e.target)) watchMenu = false;
   if (dlMenu && dlSplitEl && !dlSplitEl.contains(e.target)) dlMenu = false;
   if (saveMenu && saveSplitEl && !saveSplitEl.contains(e.target)) saveMenu = false;
+  if (regionMenu && regionEl && !regionEl.contains(e.target)) regionMenu = false;
 }} />
 
 <div class="backdrop" class:img={ready && meta.backdrop}
@@ -513,6 +557,81 @@
         </div>
       {/if}
 
+      {#if demo}
+      <!-- No library here, so the honest answer to "watch" is where it is
+           licensed. Rent/buy/stream come from TMDB's JustWatch feed. -->
+      <div class="cta">
+        {#if offers?.link}
+          <a class="btn primary" href={offers.link} target="_blank" rel="noopener"
+             title="Every option in {REGION_NAME(region)}, on JustWatch">
+            <Icon name="ticket" size={17} /> Where to watch
+          </a>
+        {/if}
+        {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
+        {#if ready && meta.imdb_url}<a class="btn ghost2" href={meta.imdb_url} target="_blank" rel="noopener"><Icon name="external" size={15} /> IMDb</a>{/if}
+      </div>
+
+      <section class="where">
+        <div class="wh-head">
+          <span class="section-h">Where to watch</span>
+          {#if regionOptions.length > 1}
+            <div class="wh-region" bind:this={regionEl}>
+              <button class="wh-rbtn" aria-expanded={regionMenu} onclick={() => (regionMenu = !regionMenu)}
+                      title="Show availability for another country">
+                {region} <Icon name="chevron" size={13} />
+              </button>
+              {#if regionMenu}
+                <div class="wh-rmenu" role="menu">
+                  {#each regionOptions as r}
+                    <button class="wh-ritem" class:on={r.code === region} role="menuitem" onclick={() => pickRegion(r.code)}>
+                      <b>{r.code}</b> {r.name}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+
+        {#if !where}
+          <p class="wh-msg"><Icon name="sync" size={13} spin /> Checking where this is streaming…</p>
+        {:else if where.enabled === false}
+          <p class="wh-msg">Availability lookup is switched off on this server (no TMDB key).</p>
+        {:else if offerRows.length}
+          <div class="wh-rows">
+            {#each offerRows as row}
+              <div class="wh-row">
+                <span class="wh-kind" title={row.hint}>{row.label}</span>
+                <div class="wh-provs">
+                  {#each row.items as p}
+                    <span class="wh-prov" title={p.name}>
+                      {#if p.logo}<img src={p.logo} alt="" loading="lazy" width="26" height="26" />{/if}
+                      <span>{p.name}</span>
+                    </span>
+                  {/each}
+                </div>
+              </div>
+            {/each}
+          </div>
+          <p class="wh-foot">
+            {REGION_NAME(region)} · availability from
+            <a href="https://www.justwatch.com" target="_blank" rel="noopener">JustWatch</a> via TMDB, and it moves
+            — <a href={offers.link} target="_blank" rel="noopener">check the current offers</a>.
+          </p>
+        {:else}
+          <p class="wh-msg">
+            Not licensed to stream, rent or buy in {REGION_NAME(region)} right now{#if regionOptions.length}
+              — but it is available in {regionOptions.length === 1 ? REGION_NAME(regionOptions[0].code) : `${regionOptions.length} other countries`}.
+            {:else}
+              . Much of this canon only circulates on disc, or through a repertory cinema or archive.
+            {/if}
+          </p>
+          <p class="wh-foot">
+            Availability from <a href="https://www.justwatch.com" target="_blank" rel="noopener">JustWatch</a> via TMDB.
+          </p>
+        {/if}
+      </section>
+      {:else}
       <div class="cta">
         <div class="watch-split" class:has-caret={watchOptions.length > 1} bind:this={splitEl}>
           <button class="btn" class:primary={watchable} onclick={watchFilm}><Icon name="play" size={16} /> {isTauri ? 'Watch in mpv' : 'Watch'}</button>
@@ -558,8 +677,20 @@
         <button class="btn" class:primary={!watchable} onclick={chooseRelease} disabled={releasesLoading} aria-busy={releasesLoading}><Icon name={releasesLoading ? 'sync' : 'search'} size={15} spin={releasesLoading} /> {releasesLoading ? 'Searching…' : 'Choose release'}</button>
         {#if ready && meta.trailer}<a class="btn" href={meta.trailer} target="_blank" rel="noopener"><Icon name="video" size={16} /> Trailer</a>{/if}
       </div>
+      {/if}
 
-      {#if !isTauri && !hideNudge}
+      {#if demo}
+        <!-- Stands in for the desktop-app nudge: there is nothing to install
+             against a demo, so it points at the thing that does exist. -->
+        <div class="app-nudge">
+          <div class="app-nudge-ic"><Icon name="github" size={17} /></div>
+          <div class="app-nudge-txt">
+            <b>Demo only</b>
+            <span>There is no home server or media library behind this build, so the features that need one are inactive. The complete application is public — every feature included.</span>
+          </div>
+          <a class="app-nudge-cta" href={github} target="_blank" rel="noopener">View on GitHub</a>
+        </div>
+      {:else if !isTauri && !hideNudge}
         <div class="app-nudge">
           <div class="app-nudge-ic"><Icon name="monitor" size={17} /></div>
           <div class="app-nudge-txt">
@@ -847,6 +978,48 @@
   .cert-item b { color: var(--faint); font-weight: 600; margin-right: 4px; }
 
   .cta { display: flex; gap: 8px; flex-wrap: wrap; align-items: stretch; }
+
+  /* ------------------------------------------ where to watch (demo) ------ */
+  /* Takes the place of the Watch/Download row's supporting detail, so it reuses
+     that area's language: .surface-2 card, hairline border, .section-h label. */
+  .where { margin-top: 18px; padding: 14px 16px 13px; border-radius: 13px;
+    border: 1px solid var(--border); background: var(--surface-2); }
+  .wh-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .wh-head .section-h { margin: 0; }
+
+  /* Country switcher — the same split-button dropdown vocabulary as "how to watch". */
+  .wh-region { position: relative; flex: none; }
+  .wh-rbtn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--muted); cursor: pointer;
+    font-family: inherit; font-size: 11.5px; font-weight: 700; letter-spacing: .06em; }
+  .wh-rbtn:hover { color: var(--text); border-color: var(--border-strong); }
+  .wh-rmenu { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; min-width: 210px;
+    max-height: 264px; overflow-y: auto; padding: 5px; background: var(--surface-2);
+    border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: var(--shadow); }
+  .wh-ritem { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 7px 10px;
+    border: 0; border-radius: 7px; background: transparent; color: var(--text); font-family: inherit;
+    font-size: 12.5px; cursor: pointer; white-space: nowrap; }
+  .wh-ritem:hover { background: var(--surface); }
+  .wh-ritem b { color: var(--faint); font-size: 11px; letter-spacing: .06em; min-width: 20px; }
+  .wh-ritem.on b { color: var(--accent); }
+
+  .wh-rows { display: flex; flex-direction: column; gap: 9px; margin-top: 11px; }
+  .wh-row { display: flex; align-items: flex-start; gap: 12px; }
+  .wh-kind { flex: none; width: 54px; padding-top: 5px; font-size: 11px; font-weight: 600; color: var(--faint);
+    text-transform: uppercase; letter-spacing: .08em; }
+  .wh-provs { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+  .wh-prov { display: inline-flex; align-items: center; gap: 7px; padding: 4px 10px 4px 4px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface); font-size: 12.5px; }
+  /* Providers ship their own brand colour; a fixed radius keeps a row of mixed
+     logos looking like one set. */
+  .wh-prov img { width: 22px; height: 22px; border-radius: 6px; object-fit: cover; flex: none; background: var(--surface-2); }
+  .wh-prov > span { white-space: nowrap; }
+
+  .wh-msg { margin: 11px 0 0; font-size: 13px; color: var(--muted); line-height: 1.5;
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .wh-foot { margin: 11px 0 0; font-size: 11.5px; color: var(--faint); line-height: 1.5; }
+  .wh-foot a { color: var(--muted); text-decoration: underline; text-underline-offset: 2px; }
+  .wh-foot a:hover { color: var(--text); }
 
   /* "Get the app" nudge — the browser player is a fallback; the app is best. */
   .app-nudge { display: flex; align-items: center; gap: 13px; flex-wrap: wrap; margin: 16px 0 2px; padding: 12px 14px;
