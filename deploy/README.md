@@ -136,8 +136,10 @@ films-demo.chrisj.uk   Cloudflare tunnel (proxied) -> http://films-demo:3000
 check compares against and the canonical name in generated URLs.
 
 That front is one `vercel.json` rewrite and nothing else, kept in
-[`vercel-demo/`](vercel-demo/README.md) — including how it is deployed (a push to
-`main` redeploys it) and why the DNS record for it must stay **unproxied**.
+[`vercel-demo/`](vercel-demo/README.md). Vercel deploys it straight from this
+repo (root directory `deploy/vercel-demo`, production branch `main`), so a push
+that touches it is the whole deploy — and pushes that don't are skipped. Its DNS
+record must stay **unproxied**; that README says why.
 
 ### Seeding / re-seeding its database
 

@@ -27,27 +27,28 @@ rendered by the container on a3server.
 
 ## Deploy
 
-Pushing a change to anything under `deploy/vercel-demo/` on `main` redeploys it:
-[`.github/workflows/demo-vercel.yml`](../../.github/workflows/demo-vercel.yml)
-runs `vercel deploy --prod` for this directory. It needs one repository secret
-and two repository variables, all set once:
+The Vercel project (`films-demo`) is connected to this repository through
+Vercel's GitHub integration, with **Root Directory `deploy/vercel-demo`** and
+production branch `main`. A push that changes this directory redeploys the
+rewrite; a push that doesn't is skipped, because Vercel's automatic ignored-build
+step sees no change under the root directory. There is no deploy workflow and no
+Vercel token in CI — the integration is the credential.
 
-```bash
-gh secret set VERCEL_TOKEN                     # Vercel -> Account Settings -> Tokens
-gh variable set VERCEL_ORG_ID --body "$(python3 -c 'import json;print(json.load(open(".vercel/project.json"))["orgId"])')"
-gh variable set VERCEL_PROJECT_ID --body "$(python3 -c 'import json;print(json.load(open(".vercel/project.json"))["projectId"])')"
-```
+So the two halves of the demo update by two independent paths, and neither needs
+a command run by hand:
 
-Nothing here is built, so the workflow deliberately ignores the rest of the
-repo — a change to `src/**` reaches the demo as a container image (`deploy.yml`
-→ GHCR → Watchtower), not through Vercel.
+| Change | Path |
+|---|---|
+| `src/**` — the app the visitor sees | `deploy.yml` → GHCR image → Watchtower on a3server |
+| `deploy/vercel-demo/**` — the rewrite | Vercel Git integration → production deployment |
 
-### By hand, and first-time setup
+### By hand
 
-The CLI is not installed globally, so every command goes through `npx` —
-including the login. `vercel login` on its own will just say
-`command not found`, and an unauthenticated `vercel --prod` reports
-`The specified token is not valid`, which means "not logged in".
+Only needed to force a redeploy without a commit. The CLI is not installed
+globally, so every command goes through `npx` — including the login.
+`vercel login` on its own will just say `command not found`, and an
+unauthenticated `vercel --prod` reports `The specified token is not valid`,
+which means "not logged in".
 
 ```bash
 cd ~/films/deploy/vercel-demo
@@ -55,27 +56,24 @@ npx vercel login          # headless box: it prints a URL + code, open it anywhe
 npx vercel --prod
 ```
 
-`vercel --prod` asks a few setup questions the first time:
+`.vercel/` (the project link) is git-ignored, so a fresh clone needs
+`npx vercel link` before the CLI will talk to the right project.
 
-| Prompt | Answer |
-|---|---|
-| Set up and deploy? | `y` |
-| Which scope? | your personal account |
-| Link to existing project? | `n` |
-| Project name | `films-demo` |
-| In which directory is your code located? | `./` |
-| Modify build settings? | `n` — there is nothing to build |
+### The hostname
 
-Then attach the hostname **in the dashboard** (Project → Settings → Domains →
-Add). That page prints the exact DNS record to create and then tracks
-certificate issuance, which the CLI does not. `npx vercel domains add` only
-registers a domain against the account, so it is the wrong command here.
+`demo.films.chrisj.uk` is attached to the project, and Vercel issued its
+certificate for that exact name. The DNS record it needs is in Cloudflare:
 
-The record will be a CNAME to `cname.vercel-dns.com` (or an A record to
-`76.76.21.21`). Add it in Cloudflare **with the proxy off — grey cloud,
-`proxied: false`** — exactly like the existing `eater` / `rcr` records. Proxying
-it would put Cloudflare's edge back in front of a name its certificate does not
-cover, which is the problem this whole arrangement exists to avoid.
+```
+CNAME  demo.films  ->  ad9ed1926776eae8.vercel-dns-017.com   (proxied: false)
+```
+
+**The grey cloud is not optional.** Proxying it would put Cloudflare's edge back
+in front of a name its own certificate does not cover, which is the problem this
+whole arrangement exists to avoid — the same reason `eater` and `rcr` are
+unproxied on this zone. The CNAME target is account-specific; if it ever needs
+re-deriving, `GET /v6/domains/demo.films.chrisj.uk/config` returns it as
+`recommendedCNAME`.
 
 ## Checks
 
